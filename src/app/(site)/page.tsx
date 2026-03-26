@@ -3,6 +3,15 @@ import Link from "next/link";
 import { ButtonLink } from "@/components/ui/button";
 import { ListCard, MetricCard, SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { getCurrentUser } from "@/modules/auth/lib/guards";
+import { listPublicCircles } from "@/modules/community/lib/service";
+import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
+import { homeFeedChannelOptions } from "@/modules/posts/lib/constants";
+import {
+  listHomeFeedPosts,
+  listHotGlobalTags,
+  rememberHomeFeedChannel
+} from "@/modules/posts/lib/service";
 import {
   featuredCircles,
   heroMetrics,
@@ -12,7 +21,57 @@ import {
   visualGuidelines
 } from "@/lib/site-data";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+type SearchParams = Promise<{
+  feed?: string;
+}>;
+
+function resolveHomeFeedChannel(
+  value: string | undefined,
+  fallback: string | undefined
+) {
+  const target = value?.trim() || fallback || "RECOMMENDED";
+  const matched = homeFeedChannelOptions.find((item) => item.value === target);
+
+  return matched?.value ?? "RECOMMENDED";
+}
+
+function buildHomeHref(channel: string) {
+  return channel === "RECOMMENDED" ? "/" : `/?feed=${channel}`;
+}
+
+export default async function HomePage({
+  searchParams
+}: {
+  searchParams: SearchParams;
+}) {
+  const [params, currentUser] = await Promise.all([searchParams, getCurrentUser()]);
+  const activeUser = currentUser?.status === "ACTIVE" ? currentUser : null;
+  const selectedChannel = resolveHomeFeedChannel(
+    params.feed,
+    activeUser?.settings?.homepageLastFeedChannel
+  );
+
+  if (
+    activeUser &&
+    activeUser.settings?.homepageLastFeedChannel &&
+    activeUser.settings.homepageLastFeedChannel !== selectedChannel
+  ) {
+    await rememberHomeFeedChannel(activeUser.id, selectedChannel);
+  }
+
+  const [feedPosts, hotTags, recommendedCircles] = await Promise.all([
+    listHomeFeedPosts({
+      channel: selectedChannel,
+      userId: activeUser?.id,
+      take: 6
+    }),
+    listHotGlobalTags(8),
+    listPublicCircles({
+      take: 3
+    })
+  ]);
   const circleAnimationClasses = ["fade-up delay-1", "fade-up delay-2", "fade-up delay-3"];
 
   return (
@@ -99,19 +158,32 @@ export default function HomePage() {
           title="圈子不是分区标签，而是有气氛的内容房间。"
         />
         <div className="grid gap-5 lg:grid-cols-3">
-          {featuredCircles.map((circle, index) => (
-            <SurfaceCard className={circleAnimationClasses[index] ?? "fade-up"} key={circle.name}>
+          {(recommendedCircles.length > 0 ? recommendedCircles : featuredCircles).map((circle, index) => (
+            <SurfaceCard
+              className={circleAnimationClasses[index] ?? "fade-up"}
+              key={"id" in circle ? circle.id : circle.name}
+            >
               <div className="flex items-center justify-between gap-4">
                 <span className="rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-xs font-semibold text-slate-900">
-                  {circle.tone}
+                  {"category" in circle ? circle.category.name : circle.tone}
                 </span>
-                <span className="text-sm text-slate-500">{circle.members} 成员</span>
+                <span className="text-sm text-slate-500">
+                  {"followersCount" in circle ? `${circle.followersCount} 关注` : `${circle.members} 成员`}
+                </span>
               </div>
-              <h3 className="mt-5 text-2xl font-semibold tracking-tight text-slate-950">{circle.name}</h3>
-              <p className="mt-3 text-sm leading-7 text-slate-600">{circle.tagline}</p>
+              <h3 className="mt-5 text-2xl font-semibold tracking-tight text-slate-950">
+                {circle.name}
+              </h3>
+              <p className="mt-3 text-sm leading-7 text-slate-600">
+                {"intro" in circle ? circle.intro : circle.tagline}
+              </p>
               <div className="mt-6">
-                <ButtonLink className="w-full" href="/circles" variant="secondary">
-                  进入圈子结构页
+                <ButtonLink
+                  className="w-full"
+                  href={"slug" in circle ? `/circles/${circle.slug}` : "/circles"}
+                  variant="secondary"
+                >
+                  打开圈子
                 </ButtonLink>
               </div>
             </SurfaceCard>
@@ -122,30 +194,70 @@ export default function HomePage() {
       <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
         <SurfaceCard>
           <SectionHeading
-            description="社区感不仅来自帖子内容，也来自“今天聊什么”“此刻哪件事最热”的节奏设计。"
-            eyebrow="活动感"
-            title="首页要有值得点进去的理由。"
+            description="推荐、热门、最新、关注动态会在首页聚合成一条基础分发流，登录用户默认记住上次停留的频道。"
+            eyebrow="首页内容流"
+            title="首页不只是门面，也要能直接开始浏览内容。"
           />
-          <div className="mt-8 space-y-4">
-            {pulseTopics.map((topic) => (
-              <div
-                className="rounded-[1.25rem] border border-black/8 bg-white/75 p-5 transition hover:-translate-y-0.5"
-                key={topic.title}
+          <div className="mt-8 flex flex-wrap gap-3">
+            {homeFeedChannelOptions.map((option) => (
+              <Link
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                  option.value === selectedChannel
+                    ? "border-[var(--color-accent)] bg-[rgba(197,94,61,0.12)] text-[var(--color-accent)]"
+                    : "border-black/10 bg-white/80 text-slate-700 hover:-translate-y-0.5"
+                }`}
+                href={buildHomeHref(option.value)}
+                key={option.value}
               >
-                <p className="eyebrow">{topic.meta}</p>
-                <h3 className="mt-3 text-xl font-semibold tracking-tight text-slate-950">{topic.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-600">{topic.body}</p>
-              </div>
+                {option.label}
+              </Link>
             ))}
+          </div>
+          <div className="mt-6 grid gap-5">
+            {feedPosts.length === 0 ? (
+              <div className="rounded-[1.25rem] border border-dashed border-black/10 bg-white/72 px-5 py-6 text-sm leading-7 text-slate-600">
+                {selectedChannel === "FOLLOWING" && !activeUser
+                  ? "登录并关注圈子后，这里会显示你关注圈子的最新帖子。"
+                  : "当前频道还没有内容，可以先去圈子里发布第一篇帖子。"}
+              </div>
+            ) : (
+              feedPosts.map((post) => (
+                <PostFeedCard
+                  currentUserId={currentUser?.id}
+                  currentUserRole={currentUser?.role}
+                  key={post.id}
+                  post={post}
+                />
+              ))
+            )}
           </div>
         </SurfaceCard>
 
         <SurfaceCard className="bg-[linear-gradient(160deg,rgba(255,255,255,0.94),rgba(255,246,239,0.92))]">
           <SectionHeading
-            description="公开社区能不能放开手做浏览，关键取决于审核、匿名追溯、限流和后台操作日志有没有先落好。"
-            eyebrow="治理底座"
-            title="有热度，也要有秩序。"
+            description="帖子流之外，首页还需要有可以支撑发现效率的热门标签和治理提示。"
+            eyebrow="热门话题"
+            title="话题标签会逐步变成发现入口。"
           />
+          <div className="mt-8 flex flex-wrap gap-3">
+            {hotTags.length > 0
+              ? hotTags.map((tag) => (
+                  <span
+                    className="rounded-full bg-[rgba(197,94,61,0.1)] px-4 py-2 text-sm font-semibold text-[var(--color-accent)]"
+                    key={tag.id}
+                  >
+                    #{tag.name} · {tag._count.postTags}
+                  </span>
+                ))
+              : pulseTopics.map((topic) => (
+                  <span
+                    className="rounded-full bg-[rgba(197,94,61,0.1)] px-4 py-2 text-sm font-semibold text-[var(--color-accent)]"
+                    key={topic.title}
+                  >
+                    {topic.meta}
+                  </span>
+                ))}
+          </div>
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             {moderationHighlights.map((item) => (
               <div className="rounded-[1.25rem] border border-black/8 bg-white/80 p-5" key={item}>

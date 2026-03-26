@@ -6,6 +6,8 @@ import { SurfaceCard } from "@/components/ui/card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { followCircleAction, unfollowCircleAction } from "@/modules/community/actions";
 import { getPublicCircleDetail } from "@/modules/community/lib/service";
+import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
+import { listCircleHotTags, listCirclePostsBySlug } from "@/modules/posts/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +58,14 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "post-deleted") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "帖子已删除",
+      message: message ?? "内容已经从公开列表移除。"
+    };
+  }
+
   return null;
 }
 
@@ -73,6 +83,14 @@ export default async function CircleDetailPage({
   if (!detail) {
     notFound();
   }
+
+  const [posts, hotTags] = await Promise.all([
+    listCirclePostsBySlug({
+      slug: detail.circle.slug,
+      take: 6
+    }),
+    listCircleHotTags(detail.circle.id, 8)
+  ]);
 
   const feedback = getFeedback(query.result, query.message);
   const returnTo = `/circles/${detail.circle.slug}`;
@@ -103,6 +121,15 @@ export default async function CircleDetailPage({
             <ButtonLink href="/circles" variant="secondary">
               返回圈子列表
             </ButtonLink>
+            {activeUser ? (
+              <ButtonLink href={`/circles/${detail.circle.slug}/posts/new`} variant="secondary">
+                发布帖子
+              </ButtonLink>
+            ) : (
+              <ButtonLink href={`/login?redirectTo=${encodeURIComponent(`/circles/${detail.circle.slug}/posts/new`)}`}>
+                登录后发帖
+              </ButtonLink>
+            )}
             {detail.canManage ? (
               <ButtonLink href={`/circles/${detail.circle.slug}/manage`}>管理圈子</ButtonLink>
             ) : null}
@@ -197,41 +224,64 @@ export default async function CircleDetailPage({
               )}
             </div>
           </SurfaceCard>
+
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">圈内标签</p>
+            {hotTags.length === 0 ? (
+              <div className="mt-5 rounded-[1.15rem] border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm leading-7 text-slate-600">
+                这里会随着帖子积累形成圈内细分标签。
+              </div>
+            ) : (
+              <div className="mt-5 flex flex-wrap gap-2">
+                {hotTags.map((tag) => (
+                  <span
+                    className="rounded-full bg-[rgba(23,107,108,0.1)] px-3 py-1 text-xs font-semibold text-[var(--color-teal)]"
+                    key={tag.id}
+                  >
+                    #{tag.name} · {tag._count.postTags}
+                  </span>
+                ))}
+              </div>
+            )}
+          </SurfaceCard>
         </div>
 
         <div className="space-y-6">
           <SurfaceCard>
             <p className="eyebrow">帖子流入口</p>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">右栏会继续承接帖子流与互动节奏。</h2>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">右栏已经开始承接真实帖子流。</h2>
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Step 5 先把圈子浏览、申请、关注和后台审核打通。帖子发布、置顶和删帖会在 Step 6 接进来。
+              现在可以直接从圈子里发帖、查看帖子详情和编辑自己的内容。评论、附件和投票互动会在下一步继续接入。
             </p>
           </SurfaceCard>
 
-          {detail.circle.posts.length === 0 ? (
+          {posts.length === 0 ? (
             <SurfaceCard className="grain-panel">
               <p className="eyebrow">帖子占位</p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">当前还没有圈内帖子</h3>
               <p className="mt-3 text-sm leading-7 text-slate-600">
-                圈子主流程已经可以先浏览和关注，帖子系统会在下一步把右侧内容流真正填满。
+                第一篇帖子会从这里开始堆起圈子节奏。
               </p>
+              <div className="mt-5">
+                {activeUser ? (
+                  <ButtonLink href={`/circles/${detail.circle.slug}/posts/new`}>发布第一篇帖子</ButtonLink>
+                ) : (
+                  <ButtonLink href={`/login?redirectTo=${encodeURIComponent(`/circles/${detail.circle.slug}/posts/new`)}`}>
+                    登录后发帖
+                  </ButtonLink>
+                )}
+              </div>
             </SurfaceCard>
           ) : (
-            detail.circle.posts.map((post) => (
-              <SurfaceCard key={post.id}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-xs font-semibold text-slate-900">
-                    {post.postType}
-                  </span>
-                  <span className="text-sm text-slate-500">{formatDate(post.publishedAt ?? post.createdAt)}</span>
-                </div>
-                <h3 className="mt-4 text-xl font-semibold tracking-tight text-slate-950">{post.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-600">{post.excerpt ?? "当前帖子还没有摘要内容。"}</p>
-                <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
-                  <span>{post.commentCount} 条评论</span>
-                  <span>{post.reactionCount} 次互动</span>
-                </div>
-              </SurfaceCard>
+            posts.map((post) => (
+              <PostFeedCard
+                compact
+                currentUserId={currentUser?.id}
+                currentUserRole={currentUser?.role}
+                key={post.id}
+                post={post}
+                showCircle={false}
+              />
             ))
           )}
         </div>

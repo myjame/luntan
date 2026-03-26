@@ -3,7 +3,6 @@ import "server-only";
 import {
   CircleManagerRole,
   CircleStatus,
-  ContentStatus,
   ModerationActionType,
   ReportTargetType,
   UserStatus,
@@ -551,24 +550,6 @@ export async function getPublicCircleDetail(
           }
         },
         orderBy: [{ createdAt: "asc" }]
-      },
-      posts: {
-        where: {
-          status: ContentStatus.PUBLISHED,
-          deletedAt: null
-        },
-        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
-        take: 5,
-        select: {
-          id: true,
-          title: true,
-          excerpt: true,
-          postType: true,
-          commentCount: true,
-          reactionCount: true,
-          publishedAt: true,
-          createdAt: true
-        }
       }
     }
   });
