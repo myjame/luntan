@@ -6,6 +6,8 @@ import { SubmitButton } from "@/modules/auth/components/submit-button";
 import { initialActionState } from "@/modules/auth/lib/types";
 import { createPostAction, updatePostAction } from "@/modules/posts/actions";
 import {
+  attachmentAccept,
+  maxAttachmentCount,
   pollResultVisibilityOptions,
   postTypeOptions,
   type PollResultVisibilityValue,
@@ -17,6 +19,7 @@ type PostEditorValues = {
   title: string;
   postType: PostTypeValue;
   content: string;
+  mediaUrls: string;
   globalTags: string;
   circleTags: string;
   isAnonymous: boolean;
@@ -25,6 +28,11 @@ type PostEditorValues = {
   allowMultiple: boolean;
   resultVisibility: PollResultVisibilityValue;
   expiresAt: string;
+  attachments: Array<{
+    id: string;
+    originalName: string;
+    sizeBytes: number;
+  }>;
 };
 
 export function PostEditorForm({
@@ -49,7 +57,7 @@ export function PostEditorForm({
   );
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form action={formAction} className="space-y-5" encType="multipart/form-data">
       <input name="circleId" type="hidden" value={initialValues.circleId} />
       {postId ? <input name="postId" type="hidden" value={postId} /> : null}
 
@@ -103,12 +111,70 @@ export function PostEditorForm({
           className="mt-2 min-h-72 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
           defaultValue={initialValues.content}
           name="content"
-          placeholder="先支持文本正文，后续会继续接评论、附件和更完整的互动渲染。"
+          placeholder="把上下文、观点和关键信息写清楚，评论、投票和附件会围绕这篇内容继续展开。"
         />
         {state.fieldErrors?.content ? (
           <p className="mt-2 text-xs text-[var(--color-accent)]">{state.fieldErrors.content}</p>
         ) : null}
       </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-slate-700">图片 / GIF 链接</span>
+        <textarea
+          className="mt-2 min-h-28 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+          defaultValue={initialValues.mediaUrls}
+          name="mediaUrls"
+          placeholder={"每行一个链接\n例如：\nhttps://example.com/cover.jpg\nhttps://example.com/funny.gif"}
+        />
+        <p className="mt-2 text-xs text-slate-500">用于帖子里的图片、GIF 和表情图展示，最多 6 个链接。</p>
+        {state.fieldErrors?.mediaUrls ? (
+          <p className="mt-2 text-xs text-[var(--color-accent)]">{state.fieldErrors.mediaUrls}</p>
+        ) : null}
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-slate-700">文档附件</span>
+        <input
+          accept={attachmentAccept}
+          className="mt-2 block w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-700 file:mr-3 file:rounded-full file:border-0 file:bg-[var(--color-accent)] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+          multiple
+          name="attachments"
+          type="file"
+        />
+        <p className="mt-2 text-xs text-slate-500">
+          支持 `pdf`、`doc`、`docx`、`xls`、`xlsx`、`zip`，单次最多 {maxAttachmentCount} 个。
+        </p>
+        {state.fieldErrors?.attachments ? (
+          <p className="mt-2 text-xs text-[var(--color-accent)]">{state.fieldErrors.attachments}</p>
+        ) : null}
+      </label>
+
+      {initialValues.attachments.length > 0 ? (
+        <div className="rounded-[1.5rem] border border-black/8 bg-[rgba(255,255,255,0.72)] p-5">
+          <p className="text-sm font-semibold text-slate-700">当前已上传附件</p>
+          <div className="mt-4 space-y-3">
+            {initialValues.attachments.map((attachment) => (
+              <label
+                className="flex items-center justify-between gap-3 rounded-2xl border border-black/8 bg-white/78 px-4 py-3"
+                key={attachment.id}
+              >
+                <span className="text-sm text-slate-700">
+                  {attachment.originalName} · {(attachment.sizeBytes / 1024 / 1024).toFixed(2)} MB
+                </span>
+                <span className="flex items-center gap-2 text-sm text-slate-500">
+                  <input
+                    className="h-4 w-4 accent-[var(--color-accent)]"
+                    name="removeAttachmentIds"
+                    type="checkbox"
+                    value={attachment.id}
+                  />
+                  移除
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-5 md:grid-cols-2">
         <label className="block">
@@ -163,7 +229,7 @@ export function PostEditorForm({
           <div>
             <p className="eyebrow">投票配置</p>
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              当前先把投票帖结构建好，正式投票动作会在下一步接进来。
+              当前投票帖已经支持单选、多选、截止时间和结果可见方式设置。
             </p>
           </div>
 

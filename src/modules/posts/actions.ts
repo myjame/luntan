@@ -7,13 +7,29 @@ import { redirect } from "next/navigation";
 import type { ActionState } from "@/modules/auth/lib/types";
 import { requireActiveUser } from "@/modules/auth/lib/guards";
 import {
+  createComment,
   createPost,
+  deleteComment,
   deletePost,
-  updatePost
+  updateComment,
+  updatePost,
+  voteOnPoll
 } from "@/modules/posts/lib/service";
 
 function formToRecord(formData: FormData) {
   return Object.fromEntries(formData.entries());
+}
+
+function formToFiles(formData: FormData, name: string) {
+  return formData
+    .getAll(name)
+    .filter((item): item is File => item instanceof File && item.size > 0);
+}
+
+function formToStringList(formData: FormData, name: string) {
+  return formData
+    .getAll(name)
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 function resolveReturnTo(rawValue: FormDataEntryValue | null, fallback: string) {
@@ -43,7 +59,10 @@ export async function createPostAction(
   formData: FormData
 ): Promise<ActionState> {
   const user = await requireActiveUser();
-  const result = await createPost(user, formToRecord(formData));
+  const result = await createPost(user, {
+    fields: formToRecord(formData),
+    attachments: formToFiles(formData, "attachments")
+  });
 
   if (!result.ok || !("postId" in result)) {
     return result;
@@ -72,7 +91,11 @@ export async function updatePostAction(
     };
   }
 
-  const result = await updatePost(user, postId, formToRecord(formData));
+  const result = await updatePost(user, postId, {
+    fields: formToRecord(formData),
+    attachments: formToFiles(formData, "attachments"),
+    removeAttachmentIds: formToStringList(formData, "removeAttachmentIds")
+  });
 
   if (!result.ok || !("postId" in result) || !("circleSlug" in result)) {
     return result;
@@ -118,5 +141,115 @@ export async function deletePostAction(formData: FormData) {
           result: result.ok ? "deleted" : "error",
           message: result.message
         })) as Route
+  );
+}
+
+export async function createCommentAction(
+  _: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const user = await requireActiveUser();
+  const result = await createComment(user, formToRecord(formData));
+  const postId = formData.get("postId");
+
+  if (!result.ok) {
+    return result;
+  }
+
+  if (typeof postId === "string" && postId.trim()) {
+    revalidatePath(`/posts/${postId}`);
+  }
+
+  redirect(`/posts/${postId}?result=comment-created#comments` as Route);
+}
+
+export async function updateCommentAction(
+  _: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const user = await requireActiveUser();
+  const commentId = formData.get("commentId");
+  const postId = formData.get("postId");
+
+  if (typeof commentId !== "string" || !commentId.trim()) {
+    return {
+      ok: false,
+      message: "缺少评论标识。"
+    };
+  }
+
+  const result = await updateComment(user, commentId, formToRecord(formData));
+
+  if (!result.ok) {
+    return result;
+  }
+
+  if (typeof postId === "string" && postId.trim()) {
+    revalidatePath(`/posts/${postId}`);
+    redirect(`/posts/${postId}?result=comment-updated#comment-${commentId}` as Route);
+  }
+
+  redirect("/" as Route);
+}
+
+export async function deleteCommentAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const commentId = formData.get("commentId");
+  const postId = formData.get("postId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/");
+
+  if (typeof commentId !== "string" || !commentId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少评论标识。"
+      }) as Route
+    );
+  }
+
+  const result = await deleteComment({
+    commentId,
+    actorId: user.id
+  });
+
+  if (typeof postId === "string" && postId.trim()) {
+    revalidatePath(`/posts/${postId}`);
+  }
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "comment-deleted" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function votePollAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const postId = formData.get("postId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/");
+
+  if (typeof postId !== "string" || !postId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少帖子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await voteOnPoll({
+    postId,
+    userId: user.id,
+    optionIds: formToStringList(formData, "optionIds")
+  });
+
+  revalidatePath(`/posts/${postId}`);
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "voted" : "error",
+      message: result.message
+    }) as Route
   );
 }

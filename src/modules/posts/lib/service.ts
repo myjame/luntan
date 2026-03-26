@@ -1,6 +1,11 @@
 import "server-only";
 
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+
 import {
+  AttachmentKind,
   CircleManagerRole,
   CircleStatus,
   ContentStatus,
@@ -12,6 +17,7 @@ import {
   type UserRole
 } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/prisma";
+import { appConfig } from "@/server/config/app-config";
 
 import type {
   HomeFeedChannelValue,
@@ -19,7 +25,12 @@ import type {
   PostTypeValue,
   SquareSortValue
 } from "@/modules/posts/lib/constants";
-import { postEditorSchema } from "@/modules/posts/lib/validation";
+import {
+  attachmentExtensionAllowlist,
+  maxAttachmentCount,
+  maxAttachmentSizeBytes
+} from "@/modules/posts/lib/constants";
+import { commentEditorSchema, postEditorSchema } from "@/modules/posts/lib/validation";
 
 function validationErrors(error: unknown) {
   if (!(error instanceof Error) || !("issues" in error)) {
@@ -110,6 +121,18 @@ const postDetailSelect = {
   contentHtml: true,
   contentJson: true,
   updatedAt: true,
+  attachments: {
+    orderBy: [{ createdAt: "asc" }],
+    select: {
+      id: true,
+      originalName: true,
+      mimeType: true,
+      extension: true,
+      sizeBytes: true,
+      accessUrl: true,
+      createdAt: true
+    }
+  },
   circle: {
     select: {
       id: true,
@@ -117,6 +140,7 @@ const postDetailSelect = {
       slug: true,
       status: true,
       deletedAt: true,
+      allowAnonymous: true,
       category: {
         select: {
           name: true,
@@ -144,6 +168,9 @@ const editablePostSelect = {
       deletedAt: true,
       allowAnonymous: true,
       ownerId: true,
+      coverUrl: true,
+      iconUrl: true,
+      intro: true,
       category: {
         select: {
           name: true
@@ -185,8 +212,53 @@ const editablePostSelect = {
         }
       }
     }
+  },
+  attachments: {
+    orderBy: [{ createdAt: "asc" }],
+    select: {
+      id: true,
+      originalName: true,
+      sizeBytes: true
+    }
   }
 } satisfies Prisma.PostSelect;
+
+const commentReplySelect = {
+  id: true,
+  postId: true,
+  authorId: true,
+  parentId: true,
+  rootId: true,
+  contentHtml: true,
+  contentJson: true,
+  isAnonymous: true,
+  replyCount: true,
+  createdAt: true,
+  updatedAt: true,
+  author: {
+    select: {
+      id: true,
+      username: true,
+      profile: {
+        select: {
+          nickname: true
+        }
+      }
+    }
+  }
+} satisfies Prisma.CommentSelect;
+
+const commentThreadSelect = {
+  ...commentReplySelect,
+  replies: {
+    where: {
+      status: ContentStatus.PUBLISHED,
+      deletedAt: null
+    },
+    orderBy: [{ createdAt: "asc" }],
+    select: commentReplySelect
+  }
+} satisfies Prisma.CommentSelect;
 
 const hotTagSelect = {
   id: true,
@@ -212,6 +284,10 @@ export type HotTagItem = Prisma.TagGetPayload<{
   select: typeof hotTagSelect;
 }>;
 
+export type CommentThreadItem = Prisma.CommentGetPayload<{
+  select: typeof commentThreadSelect;
+}>;
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -225,8 +301,41 @@ function normalizeContent(value: string) {
   return value.replace(/\r\n/g, "\n").trim();
 }
 
-function buildContentPayload(content: string) {
+function parseMediaUrls(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function getMediaFileType(url: string) {
+  return /\.(gif)(?:\?.*)?$/i.test(url) ? "gif" : "image";
+}
+
+function buildMediaHtml(mediaUrls: string[]) {
+  if (mediaUrls.length === 0) {
+    return "";
+  }
+
+  const items = mediaUrls
+    .map((url) => {
+      const safeUrl = escapeHtml(url);
+      const label = getMediaFileType(url) === "gif" ? "GIF" : "图片";
+
+      return `<figure class="post-media-card"><img alt="${label}" class="post-media-image" loading="lazy" src="${safeUrl}" /></figure>`;
+    })
+    .join("");
+
+  return `<div class="post-media-grid">${items}</div>`;
+}
+
+function buildContentPayload(content: string, mediaInput = "") {
   const normalized = normalizeContent(content);
+  const mediaUrls = parseMediaUrls(mediaInput);
   const paragraphs = normalized
     .split(/\n{2,}/)
     .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
@@ -235,9 +344,10 @@ function buildContentPayload(content: string) {
   return {
     contentJson: {
       type: "plain_text",
-      text: normalized
+      text: normalized,
+      mediaUrls
     } satisfies Prisma.JsonObject,
-    contentHtml: paragraphs,
+    contentHtml: `${paragraphs}${buildMediaHtml(mediaUrls)}`,
     excerpt:
       normalized.length > 120 ? `${normalized.slice(0, 120).trimEnd()}...` : normalized
   };
@@ -251,6 +361,18 @@ function extractContentText(value: Prisma.JsonValue) {
   const text = (value as { text?: unknown }).text;
 
   return typeof text === "string" ? text : "";
+}
+
+function extractMediaUrls(value: Prisma.JsonValue) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  const mediaUrls = (value as { mediaUrls?: unknown }).mediaUrls;
+
+  return Array.isArray(mediaUrls)
+    ? mediaUrls.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function normalizePageTake(value: number | undefined, fallback: number, max: number) {
@@ -292,6 +414,160 @@ function parsePollOptions(value: string) {
         .map((item) => item.trim())
         .filter(Boolean)
     )
+  );
+}
+
+function formatDateTimeLocal(value: Date) {
+  return new Date(value.getTime() - value.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
+
+function isAttachmentAllowed(extension: string) {
+  return attachmentExtensionAllowlist.includes(
+    extension as (typeof attachmentExtensionAllowlist)[number]
+  );
+}
+
+function getAttachmentKind(extension: string) {
+  return extension === "zip" ? AttachmentKind.ARCHIVE : AttachmentKind.DOCUMENT;
+}
+
+function validateAttachmentFiles(files: File[]) {
+  if (files.length > maxAttachmentCount) {
+    return `单次最多上传 ${maxAttachmentCount} 个附件。`;
+  }
+
+  for (const file of files) {
+    if (!(file instanceof File) || file.size === 0) {
+      continue;
+    }
+
+    const extension = path.extname(file.name).toLowerCase().replace(/^\./, "");
+
+    if (!isAttachmentAllowed(extension)) {
+      return `附件 ${file.name} 的类型不在白名单内。`;
+    }
+
+    if (file.size > maxAttachmentSizeBytes) {
+      return `附件 ${file.name} 超过 10MB 限制。`;
+    }
+  }
+
+  return null;
+}
+
+async function storePostAttachments(
+  tx: Prisma.TransactionClient,
+  input: {
+    postId: string;
+    uploaderId: string;
+    files: File[];
+  }
+) {
+  if (input.files.length === 0) {
+    return;
+  }
+
+  const baseDir = path.resolve(appConfig.uploadDir, "post-attachments");
+
+  await mkdir(baseDir, { recursive: true });
+
+  for (const file of input.files) {
+    if (!(file instanceof File) || file.size === 0) {
+      continue;
+    }
+
+    const extension = path.extname(file.name).toLowerCase().replace(/^\./, "");
+
+    if (!isAttachmentAllowed(extension)) {
+      throw new Error(`不支持上传 ${extension || "未知类型"} 附件。`);
+    }
+
+    if (file.size > maxAttachmentSizeBytes) {
+      throw new Error(`附件 ${file.name} 超过大小限制。`);
+    }
+
+    const fileName = `${randomUUID()}.${extension}`;
+    const relativePath = path.join("post-attachments", fileName);
+    const storagePath = path.join(baseDir, fileName);
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    await writeFile(storagePath, buffer);
+
+    const attachment = await tx.postAttachment.create({
+      data: {
+        postId: input.postId,
+        uploaderId: input.uploaderId,
+        kind: getAttachmentKind(extension),
+        originalName: file.name,
+        fileName,
+        mimeType: file.type || "application/octet-stream",
+        extension,
+        storagePath: relativePath,
+        accessUrl: null,
+        sizeBytes: file.size
+      },
+      select: {
+        id: true
+      }
+    });
+
+    await tx.postAttachment.update({
+      where: {
+        id: attachment.id
+      },
+      data: {
+        accessUrl: `/api/attachments/${attachment.id}`
+      }
+    });
+  }
+}
+
+async function removePostAttachments(
+  tx: Prisma.TransactionClient,
+  input: {
+    postId: string;
+    attachmentIds: string[];
+  }
+) {
+  if (input.attachmentIds.length === 0) {
+    return;
+  }
+
+  const attachments = await tx.postAttachment.findMany({
+    where: {
+      postId: input.postId,
+      id: {
+        in: input.attachmentIds
+      }
+    },
+    select: {
+      id: true,
+      storagePath: true
+    }
+  });
+
+  if (attachments.length === 0) {
+    return;
+  }
+
+  await tx.postAttachment.deleteMany({
+    where: {
+      id: {
+        in: attachments.map((item) => item.id)
+      }
+    }
+  });
+
+  await Promise.all(
+    attachments.map(async (item) => {
+      try {
+        await unlink(path.resolve(appConfig.uploadDir, item.storagePath));
+      } catch {
+        // Ignore missing files; the DB state is the source of truth.
+      }
+    })
   );
 }
 
@@ -801,6 +1077,7 @@ export async function getEditablePostById(input: {
       title: post.title,
       postType: post.postType as PostTypeValue,
       content: extractContentText(post.contentJson),
+      mediaUrls: extractMediaUrls(post.contentJson).join("\n"),
       isAnonymous: post.isAnonymous,
       globalTags: post.tags
         .filter((item) => item.tag.scope === TagScope.GLOBAL)
@@ -816,11 +1093,12 @@ export async function getEditablePostById(input: {
       resultVisibility:
         (post.poll?.resultVisibility as PollResultVisibilityValue | undefined) ??
         "ALWAYS_PUBLIC",
-      expiresAt: post.poll?.expiresAt
-        ? new Date(post.poll.expiresAt.getTime() - post.poll.expiresAt.getTimezoneOffset() * 60000)
-            .toISOString()
-            .slice(0, 16)
-        : ""
+      expiresAt: post.poll?.expiresAt ? formatDateTimeLocal(post.poll.expiresAt) : "",
+      attachments: post.attachments.map((attachment) => ({
+        id: attachment.id,
+        originalName: attachment.originalName,
+        sizeBytes: attachment.sizeBytes
+      }))
     },
     canCreateAnnouncement,
     anonymousAvailable: post.circle.allowAnonymous
@@ -832,12 +1110,29 @@ export async function getPublicPostDetail(
   currentUserId?: string | null,
   currentUserRole?: UserRole | null
 ) {
-  const post = await prisma.post.findUnique({
-    where: {
-      id: postId
-    },
-    select: postDetailSelect
-  });
+  const [post, currentUserVotes] = await Promise.all([
+    prisma.post.findUnique({
+      where: {
+        id: postId
+      },
+      select: postDetailSelect
+    }),
+    currentUserId
+      ? prisma.pollVote.findMany({
+          where: {
+            userId: currentUserId,
+            poll: {
+              is: {
+                postId
+              }
+            }
+          },
+          select: {
+            optionId: true
+          }
+        })
+      : Promise.resolve([])
+  ]);
 
   if (
     !post ||
@@ -849,11 +1144,566 @@ export async function getPublicPostDetail(
     return null;
   }
 
+  const selectedOptionIds = currentUserVotes.map((item) => item.optionId);
+  const hasVoted = selectedOptionIds.length > 0;
+  const isPollExpired = post.poll?.expiresAt
+    ? post.poll.expiresAt.getTime() <= Date.now()
+    : false;
+  const canSeePollResults = Boolean(
+    post.poll &&
+      (post.poll.resultVisibility === PollResultVisibility.ALWAYS_PUBLIC ||
+        hasVoted ||
+        currentUserRole === "SUPER_ADMIN")
+  );
+
   return {
     post,
     canEdit: Boolean(currentUserId && currentUserId === post.author.id),
-    canRevealAuthor: currentUserRole === "SUPER_ADMIN"
+    canRevealAuthor: currentUserRole === "SUPER_ADMIN",
+    pollState: post.poll
+      ? {
+          hasVoted,
+          selectedOptionIds,
+          isExpired: isPollExpired,
+          canSeeResults: canSeePollResults
+        }
+      : null
   };
+}
+
+export async function listPostComments(postId: string) {
+  return prisma.comment.findMany({
+    where: {
+      postId,
+      status: ContentStatus.PUBLISHED,
+      deletedAt: null,
+      parentId: null
+    },
+    orderBy: [{ createdAt: "asc" }],
+    select: commentThreadSelect
+  });
+}
+
+export async function createComment(
+  actor: {
+    id: string;
+    username: string;
+    role: UserRole;
+    settings?: { allowAnonymousComments: boolean } | null;
+  },
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = commentEditorSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查评论内容后再提交。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const post = await prisma.post.findUnique({
+    where: {
+      id: parsed.data.postId
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      deletedAt: true,
+      circle: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          deletedAt: true,
+          allowAnonymous: true
+        }
+      }
+    }
+  });
+
+  if (
+    !post ||
+    post.deletedAt ||
+    post.status !== ContentStatus.PUBLISHED ||
+    post.circle.deletedAt ||
+    post.circle.status !== CircleStatus.ACTIVE
+  ) {
+    return {
+      ok: false,
+      message: "当前帖子暂时不能评论。"
+    };
+  }
+
+  if (parsed.data.isAnonymous && !post.circle.allowAnonymous) {
+    return {
+      ok: false,
+      message: "当前圈子未开启匿名评论。",
+      fieldErrors: {
+        isAnonymous: "当前圈子未开启匿名评论"
+      }
+    };
+  }
+
+  if (parsed.data.isAnonymous && actor.settings?.allowAnonymousComments === false) {
+    return {
+      ok: false,
+      message: "你的账号设置已关闭匿名评论。",
+      fieldErrors: {
+        isAnonymous: "请先在账号设置中开启匿名评论"
+      }
+    };
+  }
+
+  let parentComment:
+    | {
+        id: string;
+        parentId: string | null;
+      }
+    | null = null;
+
+  if (parsed.data.parentId) {
+    parentComment = await prisma.comment.findFirst({
+      where: {
+        id: parsed.data.parentId,
+        postId: parsed.data.postId,
+        status: ContentStatus.PUBLISHED,
+        deletedAt: null
+      },
+      select: {
+        id: true,
+        parentId: true
+      }
+    });
+
+    if (!parentComment) {
+      return {
+        ok: false,
+        message: "未找到要回复的评论。"
+      };
+    }
+
+    if (parentComment.parentId) {
+      return {
+        ok: false,
+        message: "当前只支持一层回复。"
+      };
+    }
+  }
+
+  const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.comment.create({
+      data: {
+        postId: post.id,
+        authorId: actor.id,
+        parentId: parentComment?.id ?? null,
+        rootId: parentComment?.id ?? null,
+        contentJson: contentPayload.contentJson,
+        contentHtml: contentPayload.contentHtml,
+        isAnonymous: parsed.data.isAnonymous,
+        status: ContentStatus.PUBLISHED
+      }
+    });
+
+    await tx.post.update({
+      where: {
+        id: post.id
+      },
+      data: {
+        commentCount: {
+          increment: 1
+        },
+        scoreHot: {
+          increment: 0.4
+        }
+      }
+    });
+
+    if (parentComment) {
+      await tx.comment.update({
+        where: {
+          id: parentComment.id
+        },
+        data: {
+          replyCount: {
+            increment: 1
+          }
+        }
+      });
+    }
+
+    await tx.userProfile.updateMany({
+      where: {
+        userId: actor.id
+      },
+      data: {
+        lastActiveAt: now
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "create_comment",
+        entityType: "comment",
+        payloadJson: {
+          postId: post.id,
+          postTitle: post.title,
+          circleName: post.circle.name,
+          circleSlug: post.circle.slug,
+          parentId: parentComment?.id ?? null,
+          isAnonymous: parsed.data.isAnonymous
+        }
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: parentComment ? "回复已发布。" : "评论已发布。"
+  } as const;
+}
+
+export async function updateComment(
+  actor: {
+    id: string;
+    settings?: { allowAnonymousComments: boolean } | null;
+  },
+  commentId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = commentEditorSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查评论内容后再保存。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const existingComment = await prisma.comment.findUnique({
+    where: {
+      id: commentId
+    },
+    select: {
+      id: true,
+      authorId: true,
+      contentJson: true,
+      contentHtml: true,
+      deletedAt: true,
+      post: {
+        select: {
+          id: true,
+          circle: {
+            select: {
+              allowAnonymous: true,
+              slug: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!existingComment || existingComment.deletedAt || existingComment.authorId !== actor.id) {
+    return {
+      ok: false,
+      message: "你当前不能编辑这条评论。"
+    };
+  }
+
+  if (parsed.data.isAnonymous && !existingComment.post.circle.allowAnonymous) {
+    return {
+      ok: false,
+      message: "当前圈子未开启匿名评论。",
+      fieldErrors: {
+        isAnonymous: "当前圈子未开启匿名评论"
+      }
+    };
+  }
+
+  if (parsed.data.isAnonymous && actor.settings?.allowAnonymousComments === false) {
+    return {
+      ok: false,
+      message: "你的账号设置已关闭匿名评论。",
+      fieldErrors: {
+        isAnonymous: "请先在账号设置中开启匿名评论"
+      }
+    };
+  }
+
+  const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.commentRevision.create({
+      data: {
+        commentId: existingComment.id,
+        editorId: actor.id,
+        contentJson: existingComment.contentJson as Prisma.InputJsonValue,
+        contentHtml: existingComment.contentHtml
+      }
+    });
+
+    await tx.comment.update({
+      where: {
+        id: existingComment.id
+      },
+      data: {
+        contentJson: contentPayload.contentJson,
+        contentHtml: contentPayload.contentHtml,
+        isAnonymous: parsed.data.isAnonymous,
+        status: ContentStatus.PUBLISHED
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: "评论已更新。"
+  } as const;
+}
+
+export async function deleteComment(input: {
+  commentId: string;
+  actorId: string;
+}) {
+  const comment = await prisma.comment.findUnique({
+    where: {
+      id: input.commentId
+    },
+    select: {
+      id: true,
+      authorId: true,
+      parentId: true,
+      status: true,
+      deletedAt: true,
+      post: {
+        select: {
+          id: true,
+          circle: {
+            select: {
+              slug: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!comment || comment.authorId !== input.actorId) {
+    return {
+      ok: false,
+      message: "你当前不能删除这条评论。"
+    } as const;
+  }
+
+  if (comment.deletedAt || comment.status === ContentStatus.DELETED) {
+    return {
+      ok: true,
+      message: "评论已经删除。"
+    } as const;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const descendantReplies = await tx.comment.findMany({
+      where: {
+        rootId: comment.id,
+        status: ContentStatus.PUBLISHED,
+        deletedAt: null
+      },
+      select: {
+        id: true
+      }
+    });
+
+    const targetIds = [comment.id, ...descendantReplies.map((item) => item.id)];
+
+    await tx.comment.updateMany({
+      where: {
+        id: {
+          in: targetIds
+        }
+      },
+      data: {
+        status: ContentStatus.DELETED,
+        deletedAt: new Date()
+      }
+    });
+
+    await tx.post.update({
+      where: {
+        id: comment.post.id
+      },
+      data: {
+        commentCount: {
+          decrement: targetIds.length
+        }
+      }
+    });
+
+    if (comment.parentId) {
+      await tx.comment.update({
+        where: {
+          id: comment.parentId
+        },
+        data: {
+          replyCount: {
+            decrement: 1
+          }
+        }
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    message: "评论已删除。"
+  } as const;
+}
+
+export async function voteOnPoll(input: {
+  postId: string;
+  userId: string;
+  optionIds: string[];
+}) {
+  const post = await prisma.post.findUnique({
+    where: {
+      id: input.postId
+    },
+    select: {
+      id: true,
+      deletedAt: true,
+      status: true,
+      poll: {
+        select: {
+          id: true,
+          allowMultiple: true,
+          expiresAt: true,
+          options: {
+            select: {
+              id: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!post || post.deletedAt || post.status !== ContentStatus.PUBLISHED || !post.poll) {
+    return {
+      ok: false,
+      message: "当前帖子没有可投票内容。"
+    } as const;
+  }
+
+  if (post.poll.expiresAt && post.poll.expiresAt.getTime() <= Date.now()) {
+    return {
+      ok: false,
+      message: "投票已经截止。"
+    } as const;
+  }
+
+  const selectedOptionIds = Array.from(new Set(input.optionIds.filter(Boolean)));
+
+  if (selectedOptionIds.length === 0) {
+    return {
+      ok: false,
+      message: "请选择至少一个投票选项。"
+    } as const;
+  }
+
+  if (!post.poll.allowMultiple && selectedOptionIds.length !== 1) {
+    return {
+      ok: false,
+      message: "当前投票仅支持单选。"
+    } as const;
+  }
+
+  const validOptionIds = new Set(post.poll.options.map((item) => item.id));
+
+  if (selectedOptionIds.some((item) => !validOptionIds.has(item))) {
+    return {
+      ok: false,
+      message: "存在无效投票选项。"
+    } as const;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const existingVotes = await tx.pollVote.findMany({
+      where: {
+        pollId: post.poll!.id,
+        userId: input.userId
+      },
+      select: {
+        id: true,
+        optionId: true
+      }
+    });
+
+    if (existingVotes.length > 0) {
+      await tx.pollVote.deleteMany({
+        where: {
+          id: {
+            in: existingVotes.map((item) => item.id)
+          }
+        }
+      });
+
+      await Promise.all(
+        existingVotes.map((vote) =>
+          tx.pollOption.update({
+            where: {
+              id: vote.optionId
+            },
+            data: {
+              voteCount: {
+                decrement: 1
+              }
+            }
+          })
+        )
+      );
+    }
+
+    await Promise.all(
+      selectedOptionIds.map((optionId) =>
+        tx.pollVote.create({
+          data: {
+            pollId: post.poll!.id,
+            optionId,
+            userId: input.userId
+          }
+        })
+      )
+    );
+
+    await Promise.all(
+      selectedOptionIds.map((optionId) =>
+        tx.pollOption.update({
+          where: {
+            id: optionId
+          },
+          data: {
+            voteCount: {
+              increment: 1
+            }
+          }
+        })
+      )
+    );
+  });
+
+  return {
+    ok: true,
+    message: "投票已提交。"
+  } as const;
 }
 
 export async function createPost(
@@ -864,9 +1714,12 @@ export async function createPost(
     settings?: { allowAnonymousPosts: boolean } | null;
     profile?: { nickname: string | null } | null;
   },
-  rawInput: Record<string, FormDataEntryValue | undefined>
+  input: {
+    fields: Record<string, FormDataEntryValue | undefined>;
+    attachments: File[];
+  }
 ) {
-  const parsed = postEditorSchema.safeParse(rawInput);
+  const parsed = postEditorSchema.safeParse(input.fields);
 
   if (!parsed.success) {
     return {
@@ -919,9 +1772,21 @@ export async function createPost(
     };
   }
 
+  const attachmentValidationMessage = validateAttachmentFiles(input.attachments);
+
+  if (attachmentValidationMessage) {
+    return {
+      ok: false,
+      message: attachmentValidationMessage,
+      fieldErrors: {
+        attachments: attachmentValidationMessage
+      }
+    };
+  }
+
   const globalTagNames = parseTagNames(parsed.data.globalTags);
   const circleTagNames = parseTagNames(parsed.data.circleTags);
-  const contentPayload = buildContentPayload(parsed.data.content);
+  const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
   const now = new Date();
   const initialHotScore =
     parsed.data.postType === "ANNOUNCEMENT"
@@ -967,6 +1832,12 @@ export async function createPost(
       allowMultiple: parsed.data.allowMultiple,
       resultVisibility: parsed.data.resultVisibility,
       expiresAt: parsed.data.expiresAt
+    });
+
+    await storePostAttachments(tx, {
+      postId: createdPost.id,
+      uploaderId: actor.id,
+      files: input.attachments
     });
 
     await tx.circle.update({
@@ -1022,9 +1893,13 @@ export async function updatePost(
     settings?: { allowAnonymousPosts: boolean } | null;
   },
   postId: string,
-  rawInput: Record<string, FormDataEntryValue | undefined>
+  input: {
+    fields: Record<string, FormDataEntryValue | undefined>;
+    attachments: File[];
+    removeAttachmentIds: string[];
+  }
 ) {
-  const parsed = postEditorSchema.safeParse(rawInput);
+  const parsed = postEditorSchema.safeParse(input.fields);
 
   if (!parsed.success) {
     return {
@@ -1047,6 +1922,11 @@ export async function updatePost(
       contentHtml: true,
       deletedAt: true,
       circleId: true,
+      attachments: {
+        select: {
+          id: true
+        }
+      },
       circle: {
         select: {
           id: true,
@@ -1128,9 +2008,36 @@ export async function updatePost(
     };
   }
 
+  const attachmentValidationMessage = validateAttachmentFiles(input.attachments);
+
+  if (attachmentValidationMessage) {
+    return {
+      ok: false,
+      message: attachmentValidationMessage,
+      fieldErrors: {
+        attachments: attachmentValidationMessage
+      }
+    };
+  }
+
+  const remainingAttachmentCount =
+    existingPost.attachments.length -
+    existingPost.attachments.filter((item) => input.removeAttachmentIds.includes(item.id)).length +
+    input.attachments.filter((file) => file instanceof File && file.size > 0).length;
+
+  if (remainingAttachmentCount > maxAttachmentCount) {
+    return {
+      ok: false,
+      message: `单篇帖子最多保留 ${maxAttachmentCount} 个附件。`,
+      fieldErrors: {
+        attachments: `单篇帖子最多保留 ${maxAttachmentCount} 个附件`
+      }
+    };
+  }
+
   const globalTagNames = parseTagNames(parsed.data.globalTags);
   const circleTagNames = parseTagNames(parsed.data.circleTags);
-  const contentPayload = buildContentPayload(parsed.data.content);
+  const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
 
   await prisma.$transaction(async (tx) => {
     await tx.postRevision.create({
@@ -1174,6 +2081,17 @@ export async function updatePost(
       allowMultiple: parsed.data.allowMultiple,
       resultVisibility: parsed.data.resultVisibility,
       expiresAt: parsed.data.expiresAt
+    });
+
+    await removePostAttachments(tx, {
+      postId: existingPost.id,
+      attachmentIds: input.removeAttachmentIds
+    });
+
+    await storePostAttachments(tx, {
+      postId: existingPost.id,
+      uploaderId: actor.id,
+      files: input.attachments
     });
 
     await tx.auditLog.create({

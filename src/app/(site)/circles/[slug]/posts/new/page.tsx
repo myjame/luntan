@@ -49,7 +49,7 @@ export default async function NewPostPage({
               让圈子先长出内容流，再把互动和治理慢慢做厚。
             </h1>
             <p className="mt-4 text-sm leading-8 text-slate-600">
-              当前支持讨论帖、提问帖、经验帖、公告帖和投票帖。评论、附件和更完整的互动能力会在后续步骤继续接入。
+              当前支持讨论帖、提问帖、经验帖、公告帖和投票帖，也支持帖子图片、GIF 展示与文档附件上传。
             </p>
           </div>
 
@@ -79,6 +79,7 @@ export default async function NewPostPage({
                 title: "",
                 postType: "DISCUSSION",
                 content: "",
+                mediaUrls: "",
                 globalTags: "",
                 circleTags: "",
                 isAnonymous: false,
@@ -86,7 +87,8 @@ export default async function NewPostPage({
                 pollOptions: "",
                 allowMultiple: false,
                 resultVisibility: "ALWAYS_PUBLIC",
-                expiresAt: ""
+                expiresAt: "",
+                attachments: []
               }}
               mode="create"
             />

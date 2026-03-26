@@ -4,9 +4,11 @@ import { notFound } from "next/navigation";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
-import { deletePostAction } from "@/modules/posts/actions";
+import { deletePostAction, votePollAction } from "@/modules/posts/actions";
+import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
+import { PostCommentThread } from "@/modules/posts/components/post-comment-thread";
 import { getPostTypeMeta } from "@/modules/posts/lib/constants";
-import { getPublicPostDetail } from "@/modules/posts/lib/service";
+import { getPublicPostDetail, listPostComments } from "@/modules/posts/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,8 @@ type PageParams = Promise<{
 type SearchParams = Promise<{
   result?: string;
   message?: string;
+  replyTo?: string;
+  editComment?: string;
 }>;
 
 function formatDateTime(value: Date | null | undefined) {
@@ -56,6 +60,38 @@ function getFeedback(result?: string, message?: string) {
       className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
       title: "操作未完成",
       message: message ?? "请稍后再试。"
+    };
+  }
+
+  if (result === "comment-created") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "评论已发布",
+      message: message ?? "评论已经进入当前帖子。"
+    };
+  }
+
+  if (result === "comment-updated") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "评论已更新",
+      message: message ?? "修改后的评论已经生效。"
+    };
+  }
+
+  if (result === "comment-deleted") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "评论已删除",
+      message: message ?? "该评论已经从公开列表移除。"
+    };
+  }
+
+  if (result === "voted") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "投票已提交",
+      message: message ?? "你的选择已经记录。"
     };
   }
 
@@ -116,6 +152,7 @@ export default async function PostDetailPage({
 
   const feedback = getFeedback(query.result, query.message);
   const activeUser = currentUser?.status === "ACTIVE" ? currentUser : null;
+  const comments = await listPostComments(postId);
   const postTypeMeta = getPostTypeMeta(detail.post.postType);
   const authorName =
     detail.post.author.profile?.nickname ?? detail.post.author.username;
@@ -127,6 +164,7 @@ export default async function PostDetailPage({
     authorName
   });
   const deleteReturnTo = `/circles/${detail.post.circle.slug}`;
+  const returnTo = `/posts/${detail.post.id}`;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-10 lg:px-10 lg:py-14">
@@ -205,35 +243,102 @@ export default async function PostDetailPage({
                 {detail.post.poll.question ?? detail.post.title}
               </h2>
               <div className="mt-5 space-y-3">
-                {detail.post.poll.options.map((option, index) => (
-                  <div
-                    className="rounded-[1.25rem] border border-black/8 bg-white/78 px-4 py-4"
-                    key={option.id}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-slate-800">
-                        {index + 1}. {option.label}
-                      </span>
-                      <span className="text-xs text-slate-500">{option.voteCount} 票</span>
-                    </div>
+                <form action={votePollAction} className="space-y-3">
+                  <input name="postId" type="hidden" value={detail.post.id} />
+                  <input name="returnTo" type="hidden" value={returnTo} />
+                  {detail.post.poll.options.map((option, index) => {
+                    const selected = detail.pollState?.selectedOptionIds.includes(option.id);
+
+                    return (
+                      <label
+                        className="flex items-center justify-between gap-3 rounded-[1.25rem] border border-black/8 bg-white/78 px-4 py-4"
+                        key={option.id}
+                      >
+                        <span className="flex items-center gap-3">
+                          {activeUser && !detail.pollState?.isExpired ? (
+                            <input
+                              className="h-4 w-4 accent-[var(--color-accent)]"
+                              defaultChecked={selected}
+                              name="optionIds"
+                              type={detail.post.poll?.allowMultiple ? "checkbox" : "radio"}
+                              value={option.id}
+                            />
+                          ) : null}
+                          <span className="text-sm font-medium text-slate-800">
+                            {index + 1}. {option.label}
+                          </span>
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {detail.pollState?.canSeeResults ? `${option.voteCount} 票` : "投票后可见"}
+                        </span>
+                      </label>
+                    );
+                  })}
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    {activeUser ? (
+                      detail.pollState?.isExpired ? (
+                        <span className="text-sm text-slate-500">投票已经截止。</span>
+                      ) : (
+                        <Button type="submit">
+                          {detail.pollState?.hasVoted ? "更新投票" : "提交投票"}
+                        </Button>
+                      )
+                    ) : (
+                      <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}>
+                        登录后投票
+                      </ButtonLink>
+                    )}
+                    <span className="text-sm text-slate-500">
+                      {detail.post.poll.allowMultiple ? "当前投票支持多选" : "当前投票为单选"}
+                    </span>
                   </div>
-                ))}
+                </form>
               </div>
               <p className="mt-4 text-sm leading-7 text-slate-600">
-                这篇投票帖的结构已经创建完成，正式投票交互会在 Step 7 接进来。
+                {detail.post.poll.resultVisibility === "AFTER_VOTE"
+                  ? "当前投票设置为“投票后可见结果”。"
+                  : "当前投票结果对所有访客公开。"}
               </p>
             </SurfaceCard>
           ) : null}
 
-          <SurfaceCard className="grain-panel">
-            <p className="eyebrow">评论区占位</p>
-            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
-              评论与回复会在下一步接进来
-            </h3>
-            <p className="mt-3 text-sm leading-7 text-slate-600">
-              当前先把帖子主链路跑通，评论结构、一层回复和匿名评论会在 Step 7 与投票、附件一起补齐。
-            </p>
+          <SurfaceCard>
+            <p className="eyebrow">发表评论</p>
+            {activeUser ? (
+              <div className="mt-5">
+                <PostCommentForm
+                  anonymousAvailable={detail.post.circle.allowAnonymous}
+                  initialAnonymous={false}
+                  mode="create"
+                  pendingLabel="发布中..."
+                  postId={detail.post.id}
+                  submitLabel="发布评论"
+                />
+              </div>
+            ) : (
+              <div className="mt-5 rounded-[1.15rem] border border-dashed border-black/10 bg-white/72 px-4 py-5 text-sm leading-7 text-slate-600">
+                登录且审核通过后可以参与评论和回复。
+                <div className="mt-4">
+                  <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}>
+                    登录后评论
+                  </ButtonLink>
+                </div>
+              </div>
+            )}
           </SurfaceCard>
+
+          <PostCommentThread
+            activeUser={activeUser ? { id: activeUser.id } : null}
+            anonymousAvailable={detail.post.circle.allowAnonymous}
+            comments={comments}
+            currentUserId={currentUser?.id}
+            currentUserRole={currentUser?.role}
+            editComment={query.editComment}
+            postId={detail.post.id}
+            replyTo={query.replyTo}
+            returnTo={returnTo}
+          />
         </div>
 
         <div className="space-y-6">
@@ -246,6 +351,46 @@ export default async function PostDetailPage({
               <p>互动数：{detail.post.reactionCount}</p>
               <p>收藏数：{detail.post.favoriteCount}</p>
             </div>
+          </SurfaceCard>
+
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">附件</p>
+            {detail.post.attachments.length === 0 ? (
+              <div className="mt-5 rounded-[1.25rem] border border-dashed border-black/10 bg-white/70 px-4 py-5 text-sm leading-7 text-slate-600">
+                当前帖子没有上传文档附件。
+              </div>
+            ) : (
+              <div className="mt-5 space-y-3">
+                {detail.post.attachments.map((attachment) => (
+                  <div
+                    className="rounded-[1.25rem] border border-black/8 bg-white/78 px-4 py-4"
+                    key={attachment.id}
+                  >
+                    <p className="text-sm font-semibold text-slate-900">{attachment.originalName}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {attachment.extension.toUpperCase()} · {(attachment.sizeBytes / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                    <div className="mt-3">
+                      {activeUser ? (
+                        <Link
+                          className="text-sm font-semibold text-[var(--color-accent)]"
+                          href={attachment.accessUrl ?? `/api/attachments/${attachment.id}`}
+                        >
+                          下载附件
+                        </Link>
+                      ) : (
+                        <Link
+                          className="text-sm font-semibold text-[var(--color-accent)]"
+                          href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}
+                        >
+                          登录后下载
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </SurfaceCard>
 
           <SurfaceCard className="h-fit">

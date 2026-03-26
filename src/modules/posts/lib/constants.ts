@@ -22,7 +22,7 @@ export const postTypeOptions = [
   {
     value: "POLL",
     label: "投票帖",
-    description: "先支持投票帖创建结构，投票互动会在下一步接入。"
+    description: "支持单选、多选、截止时间和结果可见规则。"
   }
 ] as const;
 
@@ -81,6 +81,21 @@ export const pollResultVisibilityOptions = [
 
 export type PollResultVisibilityValue =
   (typeof pollResultVisibilityOptions)[number]["value"];
+
+export const attachmentExtensionAllowlist = [
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "zip"
+] as const;
+
+export const attachmentAccept = ".pdf,.doc,.docx,.xls,.xlsx,.zip";
+
+export const maxAttachmentCount = 6;
+
+export const maxAttachmentSizeBytes = 10 * 1024 * 1024;
 
 const postTypeMeta: Record<
   PostTypeValue,

@@ -1,12 +1,17 @@
-import type { PropsWithChildren, ReactNode } from "react";
+import type { HTMLAttributes, PropsWithChildren, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
 export function SurfaceCard({
   children,
-  className
-}: PropsWithChildren<{ className?: string }>) {
-  return <div className={cn("surface-card", className)}>{children}</div>;
+  className,
+  ...props
+}: PropsWithChildren<HTMLAttributes<HTMLDivElement>>) {
+  return (
+    <div className={cn("surface-card", className)} {...props}>
+      {children}
+    </div>
+  );
 }
 
 export function MetricCard({

@@ -251,7 +251,7 @@ export default async function CircleDetailPage({
             <p className="eyebrow">帖子流入口</p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">右栏已经开始承接真实帖子流。</h2>
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              现在可以直接从圈子里发帖、查看帖子详情和编辑自己的内容。评论、附件和投票互动会在下一步继续接入。
+              现在可以直接从圈子里发帖、查看帖子详情、参与评论回复、投票和下载文档附件。
             </p>
           </SurfaceCard>
 

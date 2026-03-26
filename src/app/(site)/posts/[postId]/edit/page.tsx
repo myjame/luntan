@@ -82,6 +82,7 @@ export default async function EditPostPage({
                 title: editor.post.title,
                 postType: editor.post.postType,
                 content: editor.post.content,
+                mediaUrls: editor.post.mediaUrls,
                 globalTags: editor.post.globalTags,
                 circleTags: editor.post.circleTags,
                 isAnonymous: editor.post.isAnonymous,
@@ -89,7 +90,8 @@ export default async function EditPostPage({
                 pollOptions: editor.post.pollOptions,
                 allowMultiple: editor.post.allowMultiple,
                 resultVisibility: editor.post.resultVisibility,
-                expiresAt: editor.post.expiresAt
+                expiresAt: editor.post.expiresAt,
+                attachments: editor.post.attachments
               }}
               mode="edit"
               postId={editor.post.id}

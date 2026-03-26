@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+function optionalTextField(maxLength: number, message: string) {
+  return z
+    .string()
+    .trim()
+    .max(maxLength, message)
+    .optional()
+    .transform((value) => value || "");
+}
+
 function checkboxToBoolean(value: unknown) {
   return value === "on" || value === "true" || value === true;
 }
@@ -19,6 +28,24 @@ function isValidDateTimeLocal(value: string) {
   const date = new Date(value);
 
   return !Number.isNaN(date.getTime());
+}
+
+function parseTokenList(value: string) {
+  return value
+    .split(/[,\n，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseMediaUrls(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\/\S+$/i.test(value);
 }
 
 export const postEditorSchema = z
@@ -41,6 +68,7 @@ export const postEditorSchema = z
       .trim()
       .min(10, "正文至少需要 10 个字符")
       .max(12000, "正文不能超过 12000 个字符"),
+    mediaUrls: optionalTextField(2000, "媒体链接输入过长"),
     globalTags: z
       .string()
       .trim()
@@ -78,12 +106,9 @@ export const postEditorSchema = z
       .transform((value) => value || "")
   })
   .superRefine((data, ctx) => {
-    const globalTagCount = data.globalTags
-      ? data.globalTags.split(/[,\n，]/).map((item) => item.trim()).filter(Boolean).length
-      : 0;
-    const circleTagCount = data.circleTags
-      ? data.circleTags.split(/[,\n，]/).map((item) => item.trim()).filter(Boolean).length
-      : 0;
+    const globalTagCount = parseTokenList(data.globalTags).length;
+    const circleTagCount = parseTokenList(data.circleTags).length;
+    const mediaUrls = parseMediaUrls(data.mediaUrls);
 
     if (globalTagCount > 5) {
       ctx.addIssue({
@@ -98,6 +123,22 @@ export const postEditorSchema = z
         code: z.ZodIssueCode.custom,
         path: ["circleTags"],
         message: "圈内标签最多填写 5 个"
+      });
+    }
+
+    if (mediaUrls.length > 6) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mediaUrls"],
+        message: "图片或 GIF 链接最多填写 6 个"
+      });
+    }
+
+    if (mediaUrls.some((item) => !isHttpUrl(item))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mediaUrls"],
+        message: "媒体链接需要是有效的 http 或 https 地址"
       });
     }
 
@@ -136,6 +177,52 @@ export const postEditorSchema = z
         code: z.ZodIssueCode.custom,
         path: ["expiresAt"],
         message: "截止时间格式无效"
+      });
+    }
+  });
+
+export const commentEditorSchema = z
+  .object({
+    postId: z.string().trim().min(1, "缺少帖子标识"),
+    parentId: optionalTextField(64, "回复标识无效"),
+    rootId: optionalTextField(64, "回复标识无效"),
+    content: optionalTextField(4000, "评论内容不能超过 4000 个字符"),
+    mediaUrls: optionalTextField(1600, "评论媒体链接输入过长"),
+    isAnonymous: z.preprocess(checkboxToBoolean, z.boolean())
+  })
+  .superRefine((data, ctx) => {
+    const contentLength = data.content.trim().length;
+    const mediaUrls = parseMediaUrls(data.mediaUrls);
+
+    if (contentLength === 0 && mediaUrls.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["content"],
+        message: "评论内容和媒体链接至少填写一项"
+      });
+    }
+
+    if (contentLength > 0 && contentLength < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["content"],
+        message: "评论内容不能为空"
+      });
+    }
+
+    if (mediaUrls.length > 4) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mediaUrls"],
+        message: "评论图片或 GIF 链接最多填写 4 个"
+      });
+    }
+
+    if (mediaUrls.some((item) => !isHttpUrl(item))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mediaUrls"],
+        message: "评论媒体链接需要是有效的 http 或 https 地址"
       });
     }
   });
