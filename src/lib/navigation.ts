@@ -12,9 +12,13 @@ export const userQuickLinks: Array<{ href: string; label: string; description: s
   { href: "/account-status", label: "状态说明", description: "查看账号状态拦截说明和后续动作。" }
 ];
 
-export const adminSections = [
-  { label: "用户审核", description: "处理注册申请和账号状态变更。" },
-  { label: "内容审核", description: "承接新用户观察期和敏感词拦截。" },
-  { label: "圈子管理", description: "审核圈子申请并维护运营秩序。" },
-  { label: "运营位", description: "配置 banner、推荐圈子和活动入口。" }
+export const adminSections: Array<{
+  href: string;
+  label: string;
+  description: string;
+}> = [
+  { href: "/admin", label: "后台首页", description: "总览审核队列、治理入口和后台节奏。" },
+  { href: "/admin/users/reviews", label: "用户审核", description: "处理注册申请并直接影响账号登录权限。" },
+  { href: "/admin/users", label: "用户管理", description: "查看用户状态、角色和历史审核结果。" },
+  { href: "/admin/password-reset", label: "密码重置", description: "超级管理员手工重置账号密码。" }
 ];
