@@ -24,8 +24,20 @@ const queues: Array<{
     actionLabel: "查看用户管理"
   },
   {
+    title: "圈子审核队列",
+    body: "处理圈子创建申请，审核通过后会自动生成圈子并把申请人设为圈主。",
+    href: "/admin/circles/reviews",
+    actionLabel: "进入圈子审核"
+  },
+  {
+    title: "圈子管理总表",
+    body: "统一查看圈子状态、圈主归属、关注量和基础运营信息，承接后续内容治理。",
+    href: "/admin/circles",
+    actionLabel: "查看圈子管理"
+  },
+  {
     title: "管理员工具位",
-    body: "首版先提供密码重置工具，后续继续补内容审核、圈子审核与治理日志。",
+    body: "首版先提供密码重置工具，其余审核和圈子入口已经独立接进后台首页。",
     href: "/admin/password-reset",
     actionLabel: "打开工具页"
   }
@@ -57,12 +69,15 @@ export default async function AdminPage() {
         <p className="eyebrow">后台总览</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">先把治理链路做厚，再把社区放开。</h2>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-          后台首页已经接入真实统计和待审账号预览，接下来可以直接沿着用户审核、用户管理、圈子系统的顺序继续推进。
+          后台首页已经接入真实统计、待审账号预览和圈子管理入口，当前可以直接沿着用户审核、圈子审核、圈子管理的顺序继续推进。
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <ButtonLink href="/admin/users/reviews">进入用户审核</ButtonLink>
           <ButtonLink href="/admin/users" variant="secondary">
             查看用户管理
+          </ButtonLink>
+          <ButtonLink href="/admin/circles/reviews" variant="secondary">
+            圈子审核
           </ButtonLink>
           <ButtonLink href="/admin/password-reset" variant="ghost">
             管理员工具
