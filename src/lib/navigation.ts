@@ -1,17 +1,15 @@
-import type { Route } from "next";
-
-export const siteNavigation: Array<{ href: Route; label: string }> = [
+export const siteNavigation: Array<{ href: string; label: string }> = [
   { href: "/", label: "首页" },
   { href: "/square", label: "广场" },
   { href: "/discover", label: "发现" },
   { href: "/circles", label: "圈子" }
 ];
 
-export const userQuickLinks = [
-  { label: "我的主页", description: "身份展示、关注关系和最近活跃。" },
-  { label: "我的通知", description: "点赞、评论、私信与审核结果汇总。" },
-  { label: "我的收藏", description: "沉淀值得回看和二次分享的内容。" },
-  { label: "隐私设置", description: "私信权限、匿名能力和资料展示。" }
+export const userQuickLinks: Array<{ href: string; label: string; description: string }> = [
+  { href: "/me", label: "我的主页", description: "身份展示、关注关系和最近活跃。" },
+  { href: "/me/settings", label: "账号设置", description: "维护昵称、头像、简介和基础资料。" },
+  { href: "/me/delete-account", label: "注销申请", description: "发起注销申请并进入管理员审核流程。" },
+  { href: "/account-status", label: "状态说明", description: "查看账号状态拦截说明和后续动作。" }
 ];
 
 export const adminSections = [

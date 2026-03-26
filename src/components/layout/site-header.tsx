@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Route } from "next";
 
 import { siteNavigation } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
@@ -24,7 +25,7 @@ export function SiteHeader() {
               className={cn(
                 "rounded-full px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
               )}
-              href={item.href}
+              href={item.href as Route}
             >
               {item.label}
             </Link>
@@ -32,6 +33,12 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
+          <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/login">
+            登录
+          </Link>
+          <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/register">
+            注册
+          </Link>
           <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/me">
             个人中心
           </Link>

@@ -1,5 +1,9 @@
+import Link from "next/link";
+import type { Route } from "next";
+
 import { SurfaceCard } from "@/components/ui/card";
 import { userQuickLinks } from "@/lib/navigation";
+import { getCurrentUser } from "@/modules/auth/lib/guards";
 
 const stats = [
   { label: "积分", value: "1,280" },
@@ -8,18 +12,23 @@ const stats = [
   { label: "收藏", value: "32" }
 ];
 
-export default function MePage() {
+export default async function MePage() {
+  const currentUser = await getCurrentUser();
+  const profile = currentUser?.profile;
+
   return (
     <div className="grid gap-6 lg:grid-cols-[0.76fr_1.24fr]">
       <SurfaceCard className="h-fit">
         <div className="flex items-center gap-4">
           <div className="flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-[linear-gradient(135deg,#c55e3d,#efc4af)] text-2xl font-bold text-white">
-            JM
+            {(profile?.nickname ?? currentUser?.username ?? "JM").slice(0, 2).toUpperCase()}
           </div>
           <div>
-            <p className="text-2xl font-semibold tracking-tight text-slate-950">myjame</p>
+            <p className="text-2xl font-semibold tracking-tight text-slate-950">
+              {profile?.nickname ?? currentUser?.username ?? "社区用户"}
+            </p>
             <p className="mt-2 text-sm leading-7 text-slate-600">
-              社区原型搭建中，当前重点是产品闭环、视觉语言和后台治理结构。
+              {profile?.bio ?? "社区原型搭建中，当前重点是产品闭环、视觉语言和后台治理结构。"}
             </p>
           </div>
         </div>
@@ -39,10 +48,14 @@ export default function MePage() {
           <p className="eyebrow">我的模块</p>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             {userQuickLinks.map((item) => (
-              <div className="rounded-[1.25rem] border border-black/8 bg-white/80 p-5" key={item.label}>
+              <Link
+                className="rounded-[1.25rem] border border-black/8 bg-white/80 p-5 transition hover:-translate-y-0.5"
+                href={item.href as Route}
+                key={item.label}
+              >
                 <h2 className="text-lg font-semibold tracking-tight text-slate-950">{item.label}</h2>
                 <p className="mt-3 text-sm leading-7 text-slate-600">{item.description}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </SurfaceCard>

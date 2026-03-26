@@ -51,12 +51,15 @@ export function ButtonLink({
   href,
   variant = "primary"
 }: PropsWithChildren<{
-  href: Route;
+  href: string;
   className?: string;
   variant?: Variant;
 }>) {
   return (
-    <Link className={cn(baseButtonClassName, getVariantClassName(variant), className)} href={href}>
+    <Link
+      className={cn(baseButtonClassName, getVariantClassName(variant), className)}
+      href={href as Route}
+    >
       {children}
     </Link>
   );

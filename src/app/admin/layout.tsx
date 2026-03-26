@@ -3,6 +3,8 @@ import Link from "next/link";
 
 import { adminSections } from "@/lib/navigation";
 
+export const dynamic = "force-dynamic";
+
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#16212d_0%,#1d2c3a_42%,#f1ecdf_42%,#f1ecdf_100%)]">

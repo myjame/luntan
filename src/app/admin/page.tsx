@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { SurfaceCard } from "@/components/ui/card";
 
 const adminStats = [
@@ -31,6 +33,14 @@ export default function AdminPage() {
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
           这个后台壳已经按用户审核、内容审核、圈子管理、运营位配置的方向拆好。后续只需要按任务清单逐页填充查询、表格和操作流。
         </p>
+        <div className="mt-6">
+          <Link
+            className="rounded-full border border-black/10 bg-white/80 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:-translate-y-0.5"
+            href="/admin/password-reset"
+          >
+            进入密码重置工具
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">

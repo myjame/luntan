@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { PrismaPg } from "@prisma/adapter-pg";
+import bcrypt from "bcryptjs";
 
 import { PrismaClient, UserRole, UserStatus } from "../src/generated/prisma/client";
 
@@ -14,16 +15,19 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  const adminPasswordHash = await bcrypt.hash("Admin123456", 10);
+
   const admin = await prisma.user.upsert({
     where: { username: "admin" },
     update: {
       status: UserStatus.ACTIVE,
-      role: UserRole.SUPER_ADMIN
+      role: UserRole.SUPER_ADMIN,
+      passwordHash: adminPasswordHash
     },
     create: {
       username: "admin",
       email: "admin@example.com",
-      passwordHash: "seed_admin_password_pending_auth_setup",
+      passwordHash: adminPasswordHash,
       status: UserStatus.ACTIVE,
       role: UserRole.SUPER_ADMIN,
       profile: {
