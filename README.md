@@ -8,6 +8,7 @@
 
 - [MVP 需求与方案](./docs/community-mvp-spec.md)
 - [技术任务清单](./docs/tech-task-list.md)
+- [GitHub 提交说明](./docs/github-workflow.md)
 
 ## 当前状态
 
