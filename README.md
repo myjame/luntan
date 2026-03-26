@@ -10,6 +10,7 @@
 - [技术任务清单](./docs/tech-task-list.md)
 - [GitHub 提交说明](./docs/github-workflow.md)
 - [项目架构说明](./docs/project-architecture.md)
+- [数据模型基础说明](./docs/data-model-foundation.md)
 - [前端视觉与交互方向](./docs/frontend-direction.md)
 
 ## 当前状态
