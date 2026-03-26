@@ -20,6 +20,7 @@ pnpm-debug.log*
 # build
 dist/
 coverage/
+tsconfig.tsbuildinfo
 
 # uploads
 uploads/

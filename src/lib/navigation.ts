@@ -1,4 +1,6 @@
-export const siteNavigation = [
+import type { Route } from "next";
+
+export const siteNavigation: Array<{ href: Route; label: string }> = [
   { href: "/", label: "首页" },
   { href: "/square", label: "广场" },
   { href: "/discover", label: "发现" },

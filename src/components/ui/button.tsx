@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Route } from "next";
 import type { ButtonHTMLAttributes, PropsWithChildren } from "react";
 
 import { cn } from "@/lib/utils";
@@ -50,7 +51,7 @@ export function ButtonLink({
   href,
   variant = "primary"
 }: PropsWithChildren<{
-  href: string;
+  href: Route;
   className?: string;
   variant?: Variant;
 }>) {
