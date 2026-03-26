@@ -19,22 +19,17 @@
 
 当前项目默认通过 SSH 推送到 GitHub。
 
-本仓库已配置的 SSH 命令：
+检查当前 SSH 配置：
 
 ```bash
 git config --get core.sshCommand
 ```
 
-当前值：
-
-```bash
-ssh -i /home/xiaoming/.ssh/id_ed25519 -o IdentitiesOnly=yes
-```
-
 说明：
 
-- 当前仓库默认使用 `/home/xiaoming/.ssh/id_ed25519` 这把私钥连接 GitHub
+- 本地私钥路径、用户名目录等信息不写入仓库文档
 - 如果后续更换机器或用户，需要重新配置对应 SSH key
+- 需要时可在本机单独执行配置，不将具体私钥路径提交到仓库
 
 ## 3. 常用 Git 提交流程
 
@@ -71,17 +66,23 @@ git add README.md docs/
 提交示例：
 
 ```bash
-git commit -m "feat: initialize project scaffold"
+git commit -m "功能：初始化项目骨架"
 ```
 
-常用提交前缀建议：
+提交信息规则：
 
-- `feat`: 新功能
-- `fix`: 修复问题
-- `docs`: 文档更新
-- `refactor`: 重构
-- `style`: 样式或格式调整
-- `chore`: 杂项维护
+- 本项目所有提交信息必须使用中文
+- 提交信息应简洁说明本次改动内容
+- 不使用英文提交说明作为正式提交内容
+
+常用中文前缀建议：
+
+- `功能`：新增功能
+- `修复`：修复问题
+- `文档`：文档更新
+- `重构`：代码重构
+- `样式`：样式或格式调整
+- `维护`：杂项维护
 
 ### 3.5 推送到 GitHub
 
@@ -106,7 +107,7 @@ git push
 ```bash
 git status --short --branch
 git add .
-git commit -m "feat: 完成某个步骤"
+git commit -m "功能：完成某个步骤"
 git push
 ```
 
@@ -123,19 +124,12 @@ git pull --rebase origin main
 ```bash
 git init -b main
 git remote add origin git@github.com:myjame/luntan.git
-git config core.sshCommand "ssh -i /home/xiaoming/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+git config core.sshCommand "ssh -i <你的私钥路径> -o IdentitiesOnly=yes"
 ```
 
-## 6. 当前已完成的首次提交
-
-当前仓库首次提交信息：
-
-```bash
-5957b8d docs: add MVP spec and technical task list
-```
-
-## 7. 后续约定
+## 6. 后续约定
 
 - 本项目后续所有代码和文档默认同步到 `origin`
 - 默认主分支为 `main`
 - 每次完成一批可独立说明的改动后，及时提交并推送
+- 所有新的提交信息统一使用中文
