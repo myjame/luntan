@@ -9,6 +9,14 @@ import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
 import { PostCommentThread } from "@/modules/posts/components/post-comment-thread";
 import { getPostTypeMeta } from "@/modules/posts/lib/constants";
 import { getPublicPostDetail, listPostComments } from "@/modules/posts/lib/service";
+import {
+  togglePostFavoriteAction,
+  togglePostLikeAction
+} from "@/modules/social/actions";
+import {
+  getCommentEmojiState,
+  getPostInteractionState
+} from "@/modules/social/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +103,46 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "liked") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "点赞已记录",
+      message: message ?? "这条内容已经加入你的点赞反馈。"
+    };
+  }
+
+  if (result === "unliked") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "已取消点赞",
+      message: message ?? "这条内容已从你的点赞反馈中移除。"
+    };
+  }
+
+  if (result === "favorited") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "已加入收藏",
+      message: message ?? "稍后可以在我的收藏里继续查看。"
+    };
+  }
+
+  if (result === "unfavorited") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "已取消收藏",
+      message: message ?? "这条内容已从你的收藏列表移除。"
+    };
+  }
+
+  if (result === "comment-reacted") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "表情回应已更新",
+      message: message ?? "评论互动状态已经刷新。"
+    };
+  }
+
   return null;
 }
 
@@ -153,6 +201,14 @@ export default async function PostDetailPage({
   const feedback = getFeedback(query.result, query.message);
   const activeUser = currentUser?.status === "ACTIVE" ? currentUser : null;
   const comments = await listPostComments(postId);
+  const commentIds = comments.flatMap((comment) => [
+    comment.id,
+    ...comment.replies.map((reply) => reply.id)
+  ]);
+  const [interactionState, emojiStateByCommentId] = await Promise.all([
+    getPostInteractionState(postId, activeUser?.id),
+    getCommentEmojiState(commentIds, activeUser?.id)
+  ]);
   const postTypeMeta = getPostTypeMeta(detail.post.postType);
   const authorName =
     detail.post.author.profile?.nickname ?? detail.post.author.username;
@@ -202,7 +258,19 @@ export default async function PostDetailPage({
               {detail.post.title}
             </h1>
             <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm leading-7 text-slate-500">
-              <span>作者：{author.label}</span>
+              <span>
+                作者：
+                {detail.post.isAnonymous ? (
+                  author.label
+                ) : (
+                  <Link
+                    className="font-medium text-slate-700 transition hover:text-slate-950"
+                    href={`/users/${detail.post.author.username}`}
+                  >
+                    {author.label}
+                  </Link>
+                )}
+              </span>
               {author.note ? <span>{author.note}</span> : null}
               <span>发布时间：{formatDateTime(detail.post.publishedAt ?? detail.post.createdAt)}</span>
               <span>最后更新：{formatDateTime(detail.post.updatedAt)}</span>
@@ -213,6 +281,11 @@ export default async function PostDetailPage({
             <ButtonLink href={`/circles/${detail.post.circle.slug}`} variant="secondary">
               返回圈子
             </ButtonLink>
+            {!detail.post.isAnonymous ? (
+              <ButtonLink href={`/users/${detail.post.author.username}`} variant="ghost">
+                作者主页
+              </ButtonLink>
+            ) : null}
             {detail.canEdit ? (
               <ButtonLink href={`/posts/${detail.post.id}/edit`}>编辑帖子</ButtonLink>
             ) : null}
@@ -335,6 +408,7 @@ export default async function PostDetailPage({
             currentUserId={currentUser?.id}
             currentUserRole={currentUser?.role}
             editComment={query.editComment}
+            emojiStateByCommentId={emojiStateByCommentId}
             postId={detail.post.id}
             replyTo={query.replyTo}
             returnTo={returnTo}
@@ -348,9 +422,43 @@ export default async function PostDetailPage({
               <p>圈子：{detail.post.circle.name}</p>
               <p>分类：{detail.post.circle.category.name}</p>
               <p>评论数：{detail.post.commentCount}</p>
-              <p>互动数：{detail.post.reactionCount}</p>
+              <p>点赞数：{detail.post.reactionCount}</p>
               <p>收藏数：{detail.post.favoriteCount}</p>
             </div>
+          </SurfaceCard>
+
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">互动操作</p>
+            {activeUser ? (
+              <div className="mt-5 flex flex-wrap gap-3">
+                <form action={togglePostLikeAction}>
+                  <input name="postId" type="hidden" value={detail.post.id} />
+                  <input name="returnTo" type="hidden" value={returnTo} />
+                  <Button type="submit" variant={interactionState.isLiked ? "primary" : "secondary"}>
+                    {interactionState.isLiked ? "已点赞" : "点赞"} · {detail.post.reactionCount}
+                  </Button>
+                </form>
+                <form action={togglePostFavoriteAction}>
+                  <input name="postId" type="hidden" value={detail.post.id} />
+                  <input name="returnTo" type="hidden" value={returnTo} />
+                  <Button
+                    type="submit"
+                    variant={interactionState.isFavorited ? "primary" : "secondary"}
+                  >
+                    {interactionState.isFavorited ? "已收藏" : "收藏"} · {detail.post.favoriteCount}
+                  </Button>
+                </form>
+              </div>
+            ) : (
+              <div className="mt-5">
+                <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}>
+                  登录后互动
+                </ButtonLink>
+              </div>
+            )}
+            <p className="mt-4 text-sm leading-7 text-slate-600">
+              点赞、收藏会同步更新到个人主页和我的列表页。
+            </p>
           </SurfaceCard>
 
           <SurfaceCard className="h-fit">

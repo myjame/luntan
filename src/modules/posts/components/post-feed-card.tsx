@@ -127,7 +127,19 @@ export function PostFeedCard({
 
       <div className="mt-5 flex flex-wrap items-end justify-between gap-4 text-sm leading-6 text-slate-500">
         <div>
-          <p>作者：{author.label}</p>
+          <p>
+            作者：
+            {post.isAnonymous ? (
+              author.label
+            ) : (
+              <Link
+                className="font-medium text-slate-700 transition hover:text-slate-950"
+                href={`/users/${post.author.username}`}
+              >
+                {author.label}
+              </Link>
+            )}
+          </p>
           {author.note ? <p>{author.note}</p> : null}
           {showCircle ? (
             <p>
@@ -144,7 +156,7 @@ export function PostFeedCard({
 
         <div className="flex flex-wrap items-center gap-4">
           <span>{post.commentCount} 评论</span>
-          <span>{post.reactionCount} 互动</span>
+          <span>{post.reactionCount} 点赞</span>
           <span>{post.favoriteCount} 收藏</span>
         </div>
       </div>

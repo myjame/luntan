@@ -5,6 +5,8 @@ import { SurfaceCard } from "@/components/ui/card";
 import { deleteCommentAction } from "@/modules/posts/actions";
 import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
 import type { CommentThreadItem } from "@/modules/posts/lib/service";
+import { toggleCommentEmojiAction } from "@/modules/social/actions";
+import type { CommentEmojiState } from "@/modules/social/lib/service";
 
 function getCommentAuthorText(input: {
   isAnonymous: boolean;
@@ -71,6 +73,7 @@ type CommentCardProps = {
   replyTo?: string;
   editComment?: string;
   isReply?: boolean;
+  emojiStateByCommentId: CommentEmojiState;
 };
 
 function CommentCard({
@@ -83,7 +86,8 @@ function CommentCard({
   anonymousAvailable,
   replyTo,
   editComment,
-  isReply = false
+  isReply = false,
+  emojiStateByCommentId
 }: CommentCardProps) {
   const authorName = comment.author.profile?.nickname ?? comment.author.username;
   const author = getCommentAuthorText({
@@ -105,7 +109,18 @@ function CommentCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-slate-900">{author.label}</p>
+          <p className="text-sm font-semibold text-slate-900">
+            {comment.isAnonymous ? (
+              author.label
+            ) : (
+              <Link
+                className="transition hover:text-[var(--color-accent)]"
+                href={`/users/${comment.author.username}`}
+              >
+                {author.label}
+              </Link>
+            )}
+          </p>
           {author.note ? <p className="mt-1 text-xs text-slate-500">{author.note}</p> : null}
         </div>
 
@@ -144,6 +159,42 @@ function CommentCard({
         <p className="mt-3 text-xs text-slate-500">
           已附带 {mediaUrls.length} 个图片 / GIF 链接。
         </p>
+      ) : null}
+
+      {(emojiStateByCommentId[comment.id] ?? []).some((item) => activeUser || item.count > 0) ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {(emojiStateByCommentId[comment.id] ?? [])
+            .filter((item) => activeUser || item.count > 0)
+            .map((item) =>
+              activeUser ? (
+                <form action={toggleCommentEmojiAction} key={`${comment.id}-${item.emojiCode}`}>
+                  <input name="postId" type="hidden" value={postId} />
+                  <input name="commentId" type="hidden" value={comment.id} />
+                  <input name="emojiCode" type="hidden" value={item.emojiCode} />
+                  <input name="returnTo" type="hidden" value={`${returnTo}#comment-${comment.id}`} />
+                  <button
+                    className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                      item.reacted
+                        ? "border-[var(--color-accent)] bg-[rgba(197,94,61,0.12)] text-[var(--color-accent)]"
+                        : "border-black/8 bg-white/78 text-slate-600 hover:border-black/14 hover:text-slate-900"
+                    }`}
+                    title={item.label}
+                    type="submit"
+                  >
+                    {item.emojiCode} {item.count > 0 ? item.count : ""}
+                  </button>
+                </form>
+              ) : (
+                <span
+                  className="rounded-full border border-black/8 bg-white/78 px-3 py-1.5 text-sm font-medium text-slate-600"
+                  key={`${comment.id}-${item.emojiCode}`}
+                  title={item.label}
+                >
+                  {item.emojiCode} {item.count}
+                </span>
+              )
+            )}
+        </div>
       ) : null}
 
       {isOwner && editComment === comment.id ? (
@@ -206,7 +257,8 @@ export function PostCommentThread({
   activeUser,
   anonymousAvailable,
   replyTo,
-  editComment
+  editComment,
+  emojiStateByCommentId
 }: {
   comments: CommentThreadItem[];
   postId: string;
@@ -217,6 +269,7 @@ export function PostCommentThread({
   anonymousAvailable: boolean;
   replyTo?: string;
   editComment?: string;
+  emojiStateByCommentId: CommentEmojiState;
 }) {
   return (
     <SurfaceCard className="grain-panel" id="comments">
@@ -236,6 +289,7 @@ export function PostCommentThread({
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
                 editComment={editComment}
+                emojiStateByCommentId={emojiStateByCommentId}
                 postId={postId}
                 replyTo={replyTo}
                 returnTo={returnTo}
@@ -250,6 +304,7 @@ export function PostCommentThread({
                       currentUserId={currentUserId}
                       currentUserRole={currentUserRole}
                       editComment={editComment}
+                      emojiStateByCommentId={emojiStateByCommentId}
                       isReply
                       key={reply.id}
                       postId={postId}

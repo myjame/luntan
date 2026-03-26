@@ -7,6 +7,10 @@ export const siteNavigation: Array<{ href: string; label: string }> = [
 
 export const userQuickLinks: Array<{ href: string; label: string; description: string }> = [
   { href: "/me", label: "我的主页", description: "身份展示、关注关系和最近活跃。" },
+  { href: "/me/posts", label: "我的帖子", description: "查看自己发布的帖子和内容沉淀。" },
+  { href: "/me/comments", label: "我的评论", description: "回看自己的评论、回复和互动痕迹。" },
+  { href: "/me/favorites", label: "我的收藏", description: "集中查看收藏过的帖子内容。" },
+  { href: "/me/follows", label: "关注与粉丝", description: "管理关注关系和粉丝列表。" },
   {
     href: "/me/circle-applications/new",
     label: "圈子申请",

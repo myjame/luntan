@@ -876,6 +876,62 @@ export async function listCirclePostsBySlug(input: { slug: string; take?: number
   });
 }
 
+export async function listPostsByAuthorId(input: {
+  authorId: string;
+  take?: number;
+  includeAnonymous?: boolean;
+}) {
+  return prisma.post.findMany({
+    where: {
+      authorId: input.authorId,
+      status: ContentStatus.PUBLISHED,
+      deletedAt: null,
+      ...(input.includeAnonymous === false ? { isAnonymous: false } : {}),
+      circle: {
+        is: {
+          status: CircleStatus.ACTIVE,
+          deletedAt: null
+        }
+      }
+    },
+    select: postFeedSelect,
+    orderBy: [{ isPinned: "desc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
+    take: normalizePageTake(input.take, 6, 24)
+  });
+}
+
+export async function listFavoritePostsByUserId(input: {
+  userId: string;
+  take?: number;
+}) {
+  const favorites = await prisma.favorite.findMany({
+    where: {
+      userId: input.userId,
+      post: {
+        is: {
+          status: ContentStatus.PUBLISHED,
+          deletedAt: null,
+          circle: {
+            is: {
+              status: CircleStatus.ACTIVE,
+              deletedAt: null
+            }
+          }
+        }
+      }
+    },
+    orderBy: [{ createdAt: "desc" }],
+    select: {
+      post: {
+        select: postFeedSelect
+      }
+    },
+    take: normalizePageTake(input.take, 6, 24)
+  });
+
+  return favorites.map((item) => item.post);
+}
+
 export async function listHomeFeedPosts(input: {
   channel: HomeFeedChannelValue;
   userId?: string | null;
