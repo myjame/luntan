@@ -1,3 +1,7 @@
+import Link from "next/link";
+
+import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
+import { AdminPagination } from "@/components/layout/admin-pagination";
 import { ButtonLink } from "@/components/ui/button";
 import { MetricCard, SurfaceCard } from "@/components/ui/card";
 import { adminReviewUserAction } from "@/modules/auth/actions";
@@ -15,6 +19,9 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
 
 type SearchParams = Promise<{
   q?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  page?: string;
   result?: string;
   message?: string;
 }>;
@@ -27,11 +34,42 @@ function formatDateTime(value: Date | null | undefined) {
   return dateFormatter.format(value);
 }
 
-function buildReturnTo(query: string) {
+function normalizePage(value?: string) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+
+  return Math.floor(parsed);
+}
+
+function sanitizeDateInput(value?: string) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+function buildReviewListHref(input: {
+  query?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  page?: number;
+}) {
   const params = new URLSearchParams();
 
-  if (query) {
-    params.set("q", query);
+  if (input.query) {
+    params.set("q", input.query);
+  }
+
+  if (input.createdFrom) {
+    params.set("createdFrom", input.createdFrom);
+  }
+
+  if (input.createdTo) {
+    params.set("createdTo", input.createdTo);
+  }
+
+  if (input.page && input.page > 1) {
+    params.set("page", String(input.page));
   }
 
   const search = params.toString();
@@ -78,18 +116,36 @@ export default async function AdminUserReviewsPage({
 }) {
   const params = await searchParams;
   const query = params.q?.trim() ?? "";
+  const createdFrom = sanitizeDateInput(params.createdFrom);
+  const createdTo = sanitizeDateInput(params.createdTo);
+  const page = normalizePage(params.page);
   const [pendingUsers, summary] = await Promise.all([
     listPendingRegistrationUsers({
       query,
+      createdFrom,
+      createdTo,
+      page,
       take: 12
     }),
     getAdminUserDirectorySummary()
   ]);
   const feedback = getFeedback(params.result, params.message);
-  const returnTo = buildReturnTo(query);
+  const returnTo = buildReviewListHref({
+    query,
+    createdFrom,
+    createdTo,
+    page: pendingUsers.page
+  });
 
   return (
     <div className="space-y-6 pt-2">
+      <AdminBreadcrumbs
+        items={[
+          { label: "后台首页", href: "/admin" },
+          { label: "用户审核" }
+        ]}
+      />
+
       <div className="rounded-[2rem] border border-black/8 bg-[rgba(255,251,246,0.92)] p-8 shadow-[0_24px_60px_rgba(24,32,45,0.08)]">
         <p className="eyebrow">后台 / 用户审核</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">注册审核先收口，登录权限才会稳定。</h2>
@@ -119,7 +175,7 @@ export default async function AdminUserReviewsPage({
       </div>
 
       <SurfaceCard>
-        <form className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]" method="get">
+        <form className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_220px_220px_auto]" method="get">
           <label className="block">
             <span className="text-sm font-semibold text-slate-700">搜索待审账号</span>
             <input
@@ -130,6 +186,27 @@ export default async function AdminUserReviewsPage({
               type="search"
             />
           </label>
+
+          <label className="block">
+            <span className="text-sm font-semibold text-slate-700">注册开始日期</span>
+            <input
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+              defaultValue={createdFrom}
+              name="createdFrom"
+              type="date"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-semibold text-slate-700">注册结束日期</span>
+            <input
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+              defaultValue={createdTo}
+              name="createdTo"
+              type="date"
+            />
+          </label>
+
           <div className="flex items-end gap-3">
             <button
               className="inline-flex items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(197,94,61,0.28)] transition hover:-translate-y-0.5"
@@ -144,7 +221,7 @@ export default async function AdminUserReviewsPage({
         </form>
       </SurfaceCard>
 
-      {pendingUsers.length === 0 ? (
+      {pendingUsers.items.length === 0 ? (
         <SurfaceCard className="grain-panel">
           <p className="eyebrow">审核队列</p>
           <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">当前没有待审核账号</h3>
@@ -153,77 +230,101 @@ export default async function AdminUserReviewsPage({
           </p>
         </SurfaceCard>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-2">
-          {pendingUsers.map((user) => {
-            const displayName = user.profile?.nickname ?? user.username;
+        <div className="space-y-6">
+          <div className="grid gap-5 xl:grid-cols-2">
+            {pendingUsers.items.map((user) => {
+              const displayName = user.profile?.nickname ?? user.username;
+              const detailHref = `/admin/users/${user.id}?returnTo=${encodeURIComponent(returnTo)}`;
 
-            return (
-              <SurfaceCard className="grain-panel h-full" key={user.id}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-4">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(197,94,61,0.12)] text-lg font-semibold text-[var(--color-accent)]">
-                      {getInitial(displayName)}
+              return (
+                <SurfaceCard className="grain-panel h-full" key={user.id}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(197,94,61,0.12)] text-lg font-semibold text-[var(--color-accent)]">
+                        {getInitial(displayName)}
+                      </div>
+                      <div>
+                        <p className="text-lg font-semibold tracking-tight text-slate-950">{displayName}</p>
+                        <p className="mt-1 text-sm text-slate-500">@{user.username}</p>
+                        <p className="mt-1 text-sm text-slate-600">{user.email}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-lg font-semibold tracking-tight text-slate-950">{displayName}</p>
-                      <p className="mt-1 text-sm text-slate-500">@{user.username}</p>
-                      <p className="mt-1 text-sm text-slate-600">{user.email}</p>
+                    <div className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-800">
+                      待审核
                     </div>
                   </div>
-                  <div className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-800">
-                    待审核
-                  </div>
-                </div>
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">注册时间</p>
-                    <p className="mt-2 text-sm font-medium text-slate-800">{formatDateTime(user.createdAt)}</p>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">注册时间</p>
+                      <p className="mt-2 text-sm font-medium text-slate-800">{formatDateTime(user.createdAt)}</p>
+                    </div>
+                    <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">资料概览</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {user.profile?.bio ? user.profile.bio : "注册时未填写简介。"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">资料概览</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">
-                      {user.profile?.bio ? user.profile.bio : "注册时未填写简介。"}
-                    </p>
-                  </div>
-                </div>
 
-                <form action={adminReviewUserAction} className="mt-6 space-y-4">
-                  <input name="userId" type="hidden" value={user.id} />
-                  <input name="returnTo" type="hidden" value={returnTo} />
+                  <form action={adminReviewUserAction} className="mt-6 space-y-4">
+                    <input name="userId" type="hidden" value={user.id} />
+                    <input name="returnTo" type="hidden" value={returnTo} />
 
-                  <label className="block">
-                    <span className="text-sm font-semibold text-slate-700">审核说明</span>
-                    <textarea
-                      className="mt-2 min-h-28 w-full rounded-[1.4rem] border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
-                      defaultValue=""
-                      name="reviewNote"
-                      placeholder="通过时可留内部备注；拒绝时请填写原因。"
-                    />
-                  </label>
+                    <label className="block">
+                      <span className="text-sm font-semibold text-slate-700">审核说明</span>
+                      <textarea
+                        className="mt-2 min-h-28 w-full rounded-[1.4rem] border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                        defaultValue=""
+                        name="reviewNote"
+                        placeholder="通过时可留内部备注；拒绝时请填写原因。"
+                      />
+                    </label>
 
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      className="inline-flex items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(197,94,61,0.28)] transition hover:-translate-y-0.5"
-                      name="decision"
-                      type="submit"
-                      value="APPROVE"
-                    >
-                      通过审核
-                    </button>
-                    <button
-                      className="inline-flex items-center justify-center rounded-full border border-rose-300 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
-                      name="decision"
-                      type="submit"
-                      value="REJECT"
-                    >
-                      拒绝并退回
-                    </button>
-                  </div>
-                </form>
-              </SurfaceCard>
-            );
-          })}
+                    <div className="flex flex-wrap gap-3">
+                      <Link
+                        className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white/80 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:-translate-y-0.5"
+                        href={detailHref}
+                      >
+                        查看注册信息
+                      </Link>
+                      <button
+                        className="inline-flex items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(197,94,61,0.28)] transition hover:-translate-y-0.5"
+                        name="decision"
+                        type="submit"
+                        value="APPROVE"
+                      >
+                        通过审核
+                      </button>
+                      <button
+                        className="inline-flex items-center justify-center rounded-full border border-rose-300 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
+                        name="decision"
+                        type="submit"
+                        value="REJECT"
+                      >
+                        拒绝并退回
+                      </button>
+                    </div>
+                  </form>
+                </SurfaceCard>
+              );
+            })}
+          </div>
+
+          <AdminPagination
+            hrefBuilder={(nextPage) =>
+              buildReviewListHref({
+                query,
+                createdFrom,
+                createdTo,
+                page: nextPage
+              })
+            }
+            page={pendingUsers.page}
+            pageSize={pendingUsers.pageSize}
+            totalCount={pendingUsers.totalCount}
+            totalPages={pendingUsers.totalPages}
+          />
         </div>
       )}
     </div>

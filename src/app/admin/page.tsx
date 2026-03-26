@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
 import { ButtonLink } from "@/components/ui/button";
 import { ListCard, MetricCard, SurfaceCard } from "@/components/ui/card";
 import { listPendingRegistrationUsers, getAdminDashboardStats } from "@/modules/auth/lib/admin";
@@ -42,13 +43,16 @@ function formatDateTime(value: Date) {
 }
 
 export default async function AdminPage() {
-  const [stats, pendingUsers] = await Promise.all([
+  const [stats, pendingUserResult] = await Promise.all([
     getAdminDashboardStats(),
     listPendingRegistrationUsers({ take: 4 })
   ]);
+  const pendingUsers = pendingUserResult.items;
 
   return (
     <div className="space-y-6 pt-2">
+      <AdminBreadcrumbs items={[{ label: "后台首页" }]} />
+
       <div className="rounded-[2rem] border border-black/8 bg-[rgba(255,251,246,0.92)] p-8 shadow-[0_24px_60px_rgba(24,32,45,0.08)]">
         <p className="eyebrow">后台总览</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">先把治理链路做厚，再把社区放开。</h2>
@@ -108,8 +112,16 @@ export default async function AdminPage() {
                         @{user.username} · {user.email}
                       </p>
                     </div>
-                    <div className="rounded-full border border-black/8 bg-[rgba(197,94,61,0.08)] px-3 py-1 text-xs font-semibold text-[var(--color-accent)]">
-                      {formatDateTime(user.createdAt)}
+                    <div className="flex items-center gap-2">
+                      <Link
+                        className="rounded-full border border-black/8 bg-white/88 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                        href={`/admin/users/${user.id}?returnTo=${encodeURIComponent("/admin")}&from=dashboard`}
+                      >
+                        查看资料
+                      </Link>
+                      <div className="rounded-full border border-black/8 bg-[rgba(197,94,61,0.08)] px-3 py-1 text-xs font-semibold text-[var(--color-accent)]">
+                        {formatDateTime(user.createdAt)}
+                      </div>
                     </div>
                   </div>
                 </div>

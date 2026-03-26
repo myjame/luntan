@@ -48,6 +48,14 @@ export type AdminUserListItem = Prisma.UserGetPayload<{
 
 export type AdminReviewDecision = "APPROVE" | "REJECT";
 
+export type AdminUserQueryResult = {
+  items: AdminUserListItem[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export const adminUserStatusOptions: Array<{ value: AuthUserStatus; label: string }> = [
   { value: "PENDING_REVIEW", label: "待审核" },
   { value: "ACTIVE", label: "已激活" },
@@ -150,6 +158,72 @@ function buildUserSearchConditions(query: string): Prisma.UserWhereInput[] {
   ];
 }
 
+function parseDateInput(value: string | undefined, boundary: "start" | "end") {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return undefined;
+  }
+
+  const date = new Date(
+    `${value}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}`
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date;
+}
+
+function buildCreatedAtFilter(createdFrom?: string, createdTo?: string) {
+  const gte = parseDateInput(createdFrom, "start");
+  const lte = parseDateInput(createdTo, "end");
+
+  if (!gte && !lte) {
+    return undefined;
+  }
+
+  return {
+    ...(gte ? { gte } : {}),
+    ...(lte ? { lte } : {})
+  } satisfies Prisma.DateTimeFilter;
+}
+
+function normalizePageNumber(value: number | undefined) {
+  if (!value || !Number.isFinite(value)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+async function paginateUsers(args: {
+  where: Prisma.UserWhereInput;
+  orderBy: Prisma.UserOrderByWithRelationInput[];
+  page?: number;
+  pageSize: number;
+}): Promise<AdminUserQueryResult> {
+  const totalCount = await prisma.user.count({
+    where: args.where
+  });
+  const totalPages = Math.max(1, Math.ceil(totalCount / args.pageSize));
+  const page = Math.min(normalizePageNumber(args.page), totalPages);
+  const items = await prisma.user.findMany({
+    where: args.where,
+    select: adminUserSelect,
+    orderBy: args.orderBy,
+    skip: (page - 1) * args.pageSize,
+    take: args.pageSize
+  });
+
+  return {
+    items,
+    totalCount,
+    page,
+    pageSize: args.pageSize,
+    totalPages
+  };
+}
+
 export function getAdminUserStatusMeta(status: AuthUserStatus) {
   return adminUserStatusMeta[status];
 }
@@ -245,34 +319,47 @@ export async function getAdminUserDirectorySummary() {
 
 export async function listPendingRegistrationUsers(filters?: {
   query?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  page?: number;
   take?: number;
 }) {
   const searchConditions = buildUserSearchConditions(filters?.query ?? "");
+  const createdAt = buildCreatedAtFilter(filters?.createdFrom, filters?.createdTo);
 
-  return prisma.user.findMany({
+  return paginateUsers({
     where: {
       status: UserStatus.PENDING_REVIEW,
+      ...(createdAt
+        ? {
+            createdAt
+          }
+        : {}),
       ...(searchConditions.length > 0
         ? {
             OR: searchConditions
           }
         : {})
     },
-    select: adminUserSelect,
     orderBy: [{ createdAt: "asc" }, { username: "asc" }],
-    take: Math.min(filters?.take ?? 12, 50)
+    page: filters?.page,
+    pageSize: Math.min(filters?.take ?? 12, 50)
   });
 }
 
 export async function listUsersForAdmin(filters?: {
   query?: string;
+  createdFrom?: string;
+  createdTo?: string;
   status?: UserStatus;
   role?: UserRole;
+  page?: number;
   take?: number;
 }) {
   const searchConditions = buildUserSearchConditions(filters?.query ?? "");
+  const createdAt = buildCreatedAtFilter(filters?.createdFrom, filters?.createdTo);
 
-  return prisma.user.findMany({
+  return paginateUsers({
     where: {
       ...(filters?.status
         ? {
@@ -284,15 +371,37 @@ export async function listUsersForAdmin(filters?: {
             role: filters.role
           }
         : {}),
+      ...(createdAt
+        ? {
+            createdAt
+          }
+        : {}),
       ...(searchConditions.length > 0
         ? {
             OR: searchConditions
           }
         : {})
     },
-    select: adminUserSelect,
     orderBy: [{ createdAt: "desc" }, { username: "asc" }],
-    take: Math.min(filters?.take ?? 40, 100)
+    page: filters?.page,
+    pageSize: Math.min(filters?.take ?? 40, 100)
+  });
+}
+
+export async function getAdminUserDetail(userId: string) {
+  return prisma.user.findUnique({
+    where: {
+      id: userId
+    },
+    include: {
+      profile: true,
+      settings: true,
+      reviewedBy: {
+        include: {
+          profile: true
+        }
+      }
+    }
   });
 }
 
