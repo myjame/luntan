@@ -105,6 +105,38 @@ async function canSendMessageToRecipient(
     permission: DirectMessagePermission;
   }
 ) {
+  const [blockedBySender, blockedByRecipient] = await Promise.all([
+    client.userBlock.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: input.senderId,
+          blockedId: input.recipientId
+        }
+      },
+      select: {
+        id: true
+      }
+    }),
+    client.userBlock.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: input.recipientId,
+          blockedId: input.senderId
+        }
+      },
+      select: {
+        id: true
+      }
+    })
+  ]);
+
+  if (blockedBySender || blockedByRecipient) {
+    return {
+      ok: false,
+      message: "当前存在屏蔽关系，暂时不能发送私信。"
+    } as const;
+  }
+
   if (input.permission === DirectMessagePermission.EVERYONE) {
     return {
       ok: true

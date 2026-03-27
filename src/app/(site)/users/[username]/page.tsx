@@ -3,9 +3,15 @@ import { notFound } from "next/navigation";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
+import { ReportForm } from "@/modules/moderation/components/report-form";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { UserCommentCard } from "@/modules/social/components/user-comment-card";
-import { followUserAction, unfollowUserAction } from "@/modules/social/actions";
+import {
+  blockUserAction,
+  followUserAction,
+  unblockUserAction,
+  unfollowUserAction
+} from "@/modules/social/actions";
 import { getPublicUserProfile } from "@/modules/social/lib/service";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -53,6 +59,30 @@ function getFeedback(result?: string, message?: string) {
       className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
       title: "操作未完成",
       message: message ?? "请稍后再试。"
+    };
+  }
+
+  if (result === "reported") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "举报已提交",
+      message: message ?? "管理员会尽快处理这条举报。"
+    };
+  }
+
+  if (result === "user-blocked") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "已屏蔽用户",
+      message: message ?? "你将不再与这个用户建立关注或私信互动。"
+    };
+  }
+
+  if (result === "user-unblocked") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "已取消屏蔽",
+      message: message ?? "你可以重新决定是否关注或私信对方。"
     };
   }
 
@@ -131,7 +161,24 @@ export default async function PublicUserPage({
               </ButtonLink>
             ) : (
               <>
-                {activeUser && profile.relation.canFollow ? (
+                {activeUser && profile.relation.blockedByViewer ? (
+                  <>
+                    <form action={unblockUserAction}>
+                      <input name="username" type="hidden" value={profile.user.username} />
+                      <input name="returnTo" type="hidden" value={returnTo} />
+                      <Button type="submit" variant="secondary">
+                        取消屏蔽
+                      </Button>
+                    </form>
+                    <span className="inline-flex items-center rounded-full border border-black/8 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                      你已屏蔽该用户，关注和私信入口已关闭。
+                    </span>
+                  </>
+                ) : activeUser && profile.relation.blockedViewer ? (
+                  <span className="inline-flex items-center rounded-full border border-black/8 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                    对方已屏蔽你，当前无法关注或私信。
+                  </span>
+                ) : activeUser && profile.relation.canFollow ? (
                   <>
                     <ButtonLink href={`/me/messages?to=${profile.user.username}`} variant="secondary">
                       发私信
@@ -141,6 +188,13 @@ export default async function PublicUserPage({
                       <input name="returnTo" type="hidden" value={returnTo} />
                       <Button type="submit" variant={profile.relation.isFollowing ? "ghost" : "primary"}>
                         {profile.relation.isFollowing ? "取消关注" : "关注对方"}
+                      </Button>
+                    </form>
+                    <form action={blockUserAction}>
+                      <input name="username" type="hidden" value={profile.user.username} />
+                      <input name="returnTo" type="hidden" value={returnTo} />
+                      <Button type="submit" variant="ghost">
+                        屏蔽用户
                       </Button>
                     </form>
                   </>
@@ -191,6 +245,22 @@ export default async function PublicUserPage({
               <li>想看自己的全部匿名内容，可以进入“我的主页”。</li>
             </ul>
           </SurfaceCard>
+
+          {activeUser && activeUser.username !== profile.user.username ? (
+            <SurfaceCard className="h-fit">
+              <p className="eyebrow">治理入口</p>
+              <div className="mt-5">
+                <ReportForm
+                  defaultOpen={query.result === "reported"}
+                  description="如果该账号存在骚扰、辱骂、广告或违规行为，可以直接提交举报。"
+                  returnTo={returnTo}
+                  summaryLabel="举报这个用户"
+                  targetId={profile.user.id}
+                  targetType="USER"
+                />
+              </div>
+            </SurfaceCard>
+          ) : null}
         </div>
 
         <div className="space-y-6">

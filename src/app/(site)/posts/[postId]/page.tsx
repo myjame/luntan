@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
+import { ReportForm } from "@/modules/moderation/components/report-form";
 import { deletePostAction, votePollAction } from "@/modules/posts/actions";
 import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
 import { PostCommentThread } from "@/modules/posts/components/post-comment-thread";
@@ -87,6 +88,14 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "comment-pending") {
+    return {
+      className: "border-sky-500/16 bg-sky-500/8 text-sky-900",
+      title: "评论已进入审核",
+      message: message ?? "这条评论暂时不会公开展示，审核后会通知你。"
+    };
+  }
+
   if (result === "comment-deleted") {
     return {
       className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
@@ -140,6 +149,14 @@ function getFeedback(result?: string, message?: string) {
       className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
       title: "表情回应已更新",
       message: message ?? "评论互动状态已经刷新。"
+    };
+  }
+
+  if (result === "reported") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "举报已提交",
+      message: message ?? "管理员会尽快处理这条举报。"
     };
   }
 
@@ -521,6 +538,34 @@ export default async function PostDetailPage({
                     #{item.tag.name}
                   </span>
                 ))}
+              </div>
+            )}
+          </SurfaceCard>
+
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">内容治理</p>
+            {activeUser ? (
+              activeUser.id === detail.post.author.id ? (
+                <div className="mt-5 rounded-[1.25rem] border border-dashed border-black/10 bg-white/70 px-4 py-5 text-sm leading-7 text-slate-600">
+                  这是你自己的帖子，如需调整内容可以直接编辑；举报入口对本人内容默认关闭。
+                </div>
+              ) : (
+                <div className="mt-5">
+                  <ReportForm
+                    defaultOpen={query.result === "reported"}
+                    description="如果帖子存在攻击、广告、违规或其他问题，可以直接提交举报。"
+                    returnTo={returnTo}
+                    summaryLabel="举报这篇帖子"
+                    targetId={detail.post.id}
+                    targetType="POST"
+                  />
+                </div>
+              )
+            ) : (
+              <div className="mt-5">
+                <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`} variant="secondary">
+                  登录后举报
+                </ButtonLink>
               </div>
             )}
           </SurfaceCard>

@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
+import { ReportForm } from "@/modules/moderation/components/report-form";
 import { deleteCommentAction } from "@/modules/posts/actions";
 import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
 import type { CommentThreadItem } from "@/modules/posts/lib/service";
@@ -227,6 +228,19 @@ function CommentCard({
               删除评论
             </Button>
           </form>
+        </div>
+      ) : null}
+
+      {activeUser && !isOwner ? (
+        <div className="mt-4">
+          <ReportForm
+            className="bg-[rgba(255,255,255,0.82)]"
+            description="如果评论存在攻击、广告或违规问题，可以直接举报。"
+            returnTo={`${returnTo}#comment-${comment.id}`}
+            summaryLabel="举报这条评论"
+            targetId={comment.id}
+            targetType="COMMENT"
+          />
         </div>
       ) : null}
 

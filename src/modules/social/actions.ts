@@ -6,10 +6,12 @@ import { redirect } from "next/navigation";
 
 import { requireActiveUser } from "@/modules/auth/lib/guards";
 import {
+  blockUser,
   followUser,
   toggleCommentEmoji,
   togglePostFavorite,
   togglePostLike,
+  unblockUser,
   unfollowUser
 } from "@/modules/social/lib/service";
 
@@ -191,6 +193,62 @@ export async function unfollowUserAction(formData: FormData) {
   redirect(
     buildRedirectPath(returnTo, {
       result: result.ok ? "user-unfollowed" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function blockUserAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const username = formData.get("username");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/");
+
+  if (typeof username !== "string" || !username.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少用户标识。"
+      }) as Route
+    );
+  }
+
+  const result = await blockUser(user.id, username);
+
+  revalidatePath("/me");
+  revalidatePath("/me/follows");
+  revalidatePath(`/users/${username}`);
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "user-blocked" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function unblockUserAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const username = formData.get("username");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/");
+
+  if (typeof username !== "string" || !username.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少用户标识。"
+      }) as Route
+    );
+  }
+
+  const result = await unblockUser(user.id, username);
+
+  revalidatePath("/me");
+  revalidatePath("/me/follows");
+  revalidatePath(`/users/${username}`);
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "user-unblocked" : "error",
       message: result.message
     }) as Route
   );

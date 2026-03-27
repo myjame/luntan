@@ -33,5 +33,10 @@ export const adminSections: Array<{
   { href: "/admin/users", label: "用户管理", description: "查看用户状态、角色和历史审核结果。" },
   { href: "/admin/circles/reviews", label: "圈子审核", description: "处理圈子创建申请并决定是否上线。" },
   { href: "/admin/circles", label: "圈子管理", description: "查看圈子状态、圈主信息和基础运营数据。" },
+  { href: "/admin/moderation/reviews", label: "内容审核", description: "处理新用户和风险词命中的待审内容。" },
+  { href: "/admin/moderation/reports", label: "举报处理", description: "对举报执行结案、删帖删评、禁言和封号。" },
+  { href: "/admin/moderation/users", label: "治理用户", description: "统一维护禁言、封禁和解除限制动作。" },
+  { href: "/admin/moderation/sensitive-words", label: "敏感词", description: "查看拦截、送审和提示修改规则。" },
+  { href: "/admin/logs", label: "操作日志", description: "按动作、实体和时间查询后台治理记录。" },
   { href: "/admin/password-reset", label: "密码重置", description: "超级管理员手工重置账号密码。" }
 ];

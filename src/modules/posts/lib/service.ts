@@ -37,7 +37,9 @@ import {
   linkifyMentionsInEscapedText
 } from "@/modules/notifications/lib/mentions";
 import { createNotifications } from "@/modules/notifications/lib/service";
+import { getContentModerationDecision } from "@/modules/moderation/lib/service";
 import { commentEditorSchema, postEditorSchema } from "@/modules/posts/lib/validation";
+import { consumeRateLimit } from "@/server/rate-limit";
 
 function validationErrors(error: unknown) {
   if (!(error instanceof Error) || !("issues" in error)) {
@@ -1367,6 +1369,35 @@ export async function createComment(
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
   const mentionUsernames = extractMentionUsernames(parsed.data.content);
   const now = new Date();
+  const rateLimit = await consumeRateLimit({
+    key: `comment:${actor.id}`,
+    limit: 20,
+    windowMs: 10 * 60 * 1000
+  });
+
+  if (!rateLimit.ok) {
+    return {
+      ok: false,
+      message: "评论过于频繁，请稍后再试。"
+    };
+  }
+
+  const moderation = await getContentModerationDecision(prisma, {
+    authorId: actor.id,
+    contentType: "COMMENT",
+    text: parsed.data.content,
+    respectObservationPeriod: true
+  });
+
+  if (!moderation.ok) {
+    return {
+      ok: false,
+      message: moderation.message,
+      fieldErrors: {
+        content: moderation.message
+      }
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     const createdComment = await tx.comment.create({
@@ -1378,38 +1409,41 @@ export async function createComment(
         contentJson: contentPayload.contentJson,
         contentHtml: contentPayload.contentHtml,
         isAnonymous: parsed.data.isAnonymous,
-        status: ContentStatus.PUBLISHED
+        status: moderation.status,
+        reviewNote: moderation.status === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null
       },
       select: {
         id: true
       }
     });
 
-    await tx.post.update({
-      where: {
-        id: post.id
-      },
-      data: {
-        commentCount: {
-          increment: 1
-        },
-        scoreHot: {
-          increment: 0.4
-        }
-      }
-    });
-
-    if (parentComment) {
-      await tx.comment.update({
+    if (moderation.status === ContentStatus.PUBLISHED) {
+      await tx.post.update({
         where: {
-          id: parentComment.id
+          id: post.id
         },
         data: {
-          replyCount: {
+          commentCount: {
             increment: 1
+          },
+          scoreHot: {
+            increment: 0.4
           }
         }
       });
+
+      if (parentComment) {
+        await tx.comment.update({
+          where: {
+            id: parentComment.id
+          },
+          data: {
+            replyCount: {
+              increment: 1
+            }
+          }
+        });
+      }
     }
 
     await tx.userProfile.updateMany({
@@ -1424,7 +1458,10 @@ export async function createComment(
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
-        action: "create_comment",
+        action:
+          moderation.status === ContentStatus.PUBLISHED
+            ? "create_comment"
+            : "submit_comment_for_review",
         entityType: "comment",
         payloadJson: {
           postId: post.id,
@@ -1432,10 +1469,16 @@ export async function createComment(
           circleName: post.circle.name,
           circleSlug: post.circle.slug,
           parentId: parentComment?.id ?? null,
-          isAnonymous: parsed.data.isAnonymous
+          isAnonymous: parsed.data.isAnonymous,
+          moderationStatus: moderation.status,
+          reviewNote: moderation.status === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null
         }
       }
     });
+
+    if (moderation.status === ContentStatus.PENDING_REVIEW) {
+      return;
+    }
 
     const notificationInputs: Parameters<typeof createNotifications>[1] = [];
 
@@ -1493,7 +1536,13 @@ export async function createComment(
 
   return {
     ok: true,
-    message: parentComment ? "回复已发布。" : "评论已发布。"
+    message:
+      moderation.status === ContentStatus.PUBLISHED
+        ? parentComment
+          ? "回复已发布。"
+          : "评论已发布。"
+        : moderation.message,
+    status: moderation.status
   } as const;
 }
 
@@ -1523,6 +1572,8 @@ export async function updateComment(
     select: {
       id: true,
       authorId: true,
+      parentId: true,
+      status: true,
       contentJson: true,
       contentHtml: true,
       deletedAt: true,
@@ -1575,6 +1626,22 @@ export async function updateComment(
     )
   );
   const newMentionUsernames = extractMentionUsernames(parsed.data.content);
+  const moderation = await getContentModerationDecision(prisma, {
+    authorId: actor.id,
+    contentType: "COMMENT",
+    text: parsed.data.content,
+    respectObservationPeriod: existingComment.status !== ContentStatus.PUBLISHED
+  });
+
+  if (!moderation.ok) {
+    return {
+      ok: false,
+      message: moderation.message,
+      fieldErrors: {
+        content: moderation.message
+      }
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.commentRevision.create({
@@ -1586,6 +1653,12 @@ export async function updateComment(
       }
     });
 
+    const nextStatus =
+      existingComment.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? ContentStatus.PUBLISHED
+        : ContentStatus.PENDING_REVIEW;
+
     await tx.comment.update({
       where: {
         id: existingComment.id
@@ -1594,9 +1667,45 @@ export async function updateComment(
         contentJson: contentPayload.contentJson,
         contentHtml: contentPayload.contentHtml,
         isAnonymous: parsed.data.isAnonymous,
-        status: ContentStatus.PUBLISHED
+        status: nextStatus,
+        reviewNote: nextStatus === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null,
+        reviewedAt: nextStatus === ContentStatus.PENDING_REVIEW ? null : undefined,
+        reviewedById: nextStatus === ContentStatus.PENDING_REVIEW ? null : undefined
       }
     });
+
+    if (
+      existingComment.status === ContentStatus.PUBLISHED &&
+      nextStatus === ContentStatus.PENDING_REVIEW
+    ) {
+      await tx.post.update({
+        where: {
+          id: existingComment.post.id
+        },
+        data: {
+          commentCount: {
+            decrement: 1
+          }
+        }
+      });
+
+      if (existingComment.parentId) {
+        await tx.comment.update({
+          where: {
+            id: existingComment.parentId
+          },
+          data: {
+            replyCount: {
+              decrement: 1
+            }
+          }
+        });
+      }
+    }
+
+    if (nextStatus === ContentStatus.PENDING_REVIEW) {
+      return;
+    }
 
     const addedMentionUsernames = newMentionUsernames.filter(
       (username) => !previousMentionUsernames.has(username.toLowerCase())
@@ -1623,7 +1732,16 @@ export async function updateComment(
 
   return {
     ok: true,
-    message: "评论已更新。"
+    message:
+      existingComment.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? "评论已更新。"
+        : moderation.message ?? "评论已更新，内容重新进入审核。",
+    status:
+      existingComment.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? ContentStatus.PUBLISHED
+        : ContentStatus.PENDING_REVIEW
   } as const;
 }
 
@@ -1946,6 +2064,36 @@ export async function createPost(
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
   const mentionUsernames = extractMentionUsernames(parsed.data.content);
   const now = new Date();
+  const rateLimit = await consumeRateLimit({
+    key: `post:${actor.id}`,
+    limit: 8,
+    windowMs: 10 * 60 * 1000
+  });
+
+  if (!rateLimit.ok) {
+    return {
+      ok: false,
+      message: "发帖过于频繁，请稍后再试。"
+    };
+  }
+
+  const moderation = await getContentModerationDecision(prisma, {
+    authorId: actor.id,
+    contentType: "POST",
+    text: `${parsed.data.title}\n${parsed.data.content}`,
+    respectObservationPeriod: true
+  });
+
+  if (!moderation.ok) {
+    return {
+      ok: false,
+      message: moderation.message,
+      fieldErrors: {
+        content: moderation.message
+      }
+    };
+  }
+
   const initialHotScore =
     parsed.data.postType === "ANNOUNCEMENT"
       ? 2
@@ -1966,8 +2114,9 @@ export async function createPost(
         contentJson: contentPayload.contentJson,
         contentHtml: contentPayload.contentHtml,
         isAnonymous: parsed.data.isAnonymous,
-        status: ContentStatus.PUBLISHED,
-        publishedAt: now,
+        status: moderation.status,
+        reviewNote: moderation.status === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null,
+        publishedAt: moderation.status === ContentStatus.PUBLISHED ? now : null,
         scoreHot: initialHotScore
       },
       select: {
@@ -1998,16 +2147,18 @@ export async function createPost(
       files: input.attachments
     });
 
-    await tx.circle.update({
-      where: {
-        id: postingContext.circle.id
-      },
-      data: {
-        postsCount: {
-          increment: 1
+    if (moderation.status === ContentStatus.PUBLISHED) {
+      await tx.circle.update({
+        where: {
+          id: postingContext.circle.id
+        },
+        data: {
+          postsCount: {
+            increment: 1
+          }
         }
-      }
-    });
+      });
+    }
 
     await tx.userProfile.updateMany({
       where: {
@@ -2021,7 +2172,8 @@ export async function createPost(
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
-        action: "create_post",
+        action:
+          moderation.status === ContentStatus.PUBLISHED ? "create_post" : "submit_post_for_review",
         entityType: "post",
         entityId: createdPost.id,
         payloadJson: {
@@ -2029,10 +2181,22 @@ export async function createPost(
           circleSlug: postingContext.circle.slug,
           postType: parsed.data.postType,
           title: parsed.data.title,
-          isAnonymous: parsed.data.isAnonymous
+          isAnonymous: parsed.data.isAnonymous,
+          moderationStatus: moderation.status,
+          reviewNote: moderation.status === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null
         }
       }
     });
+
+    if (moderation.status === ContentStatus.PENDING_REVIEW) {
+      return {
+        ok: true,
+        message: moderation.message,
+        postId: createdPost.id,
+        circleSlug: postingContext.circle.slug,
+        status: moderation.status
+      } as const;
+    }
 
     const mentionedUsers = (await findMentionedUsers(tx, mentionUsernames)).filter(
       (user) => user.id !== actor.id
@@ -2057,7 +2221,8 @@ export async function createPost(
       ok: true,
       message: "帖子已发布。",
       postId: createdPost.id,
-      circleSlug: postingContext.circle.slug
+      circleSlug: postingContext.circle.slug,
+      status: moderation.status
     } as const;
   });
 }
@@ -2093,6 +2258,7 @@ export async function updatePost(
     select: {
       id: true,
       authorId: true,
+      status: true,
       postType: true,
       title: true,
       contentJson: true,
@@ -2221,6 +2387,22 @@ export async function updatePost(
     )
   );
   const newMentionUsernames = extractMentionUsernames(parsed.data.content);
+  const moderation = await getContentModerationDecision(prisma, {
+    authorId: actor.id,
+    contentType: "POST",
+    text: `${parsed.data.title}\n${parsed.data.content}`,
+    respectObservationPeriod: existingPost.status !== ContentStatus.PUBLISHED
+  });
+
+  if (!moderation.ok) {
+    return {
+      ok: false,
+      message: moderation.message,
+      fieldErrors: {
+        content: moderation.message
+      }
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.postRevision.create({
@@ -2233,6 +2415,12 @@ export async function updatePost(
       }
     });
 
+    const nextStatus =
+      existingPost.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? ContentStatus.PUBLISHED
+        : ContentStatus.PENDING_REVIEW;
+
     await tx.post.update({
       where: {
         id: existingPost.id
@@ -2244,10 +2432,31 @@ export async function updatePost(
         contentJson: contentPayload.contentJson,
         contentHtml: contentPayload.contentHtml,
         isAnonymous: parsed.data.isAnonymous,
-        status: ContentStatus.PUBLISHED,
-        publishedAt: existingPost.deletedAt ? new Date() : undefined
+        status: nextStatus,
+        reviewNote: nextStatus === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null,
+        reviewedAt: nextStatus === ContentStatus.PENDING_REVIEW ? null : undefined,
+        reviewedById: nextStatus === ContentStatus.PENDING_REVIEW ? null : undefined,
+        publishedAt:
+          nextStatus === ContentStatus.PENDING_REVIEW
+            ? null
+            : existingPost.deletedAt || existingPost.status !== ContentStatus.PUBLISHED
+              ? new Date()
+              : undefined
       }
     });
+
+    if (existingPost.status === ContentStatus.PUBLISHED && nextStatus === ContentStatus.PENDING_REVIEW) {
+      await tx.circle.update({
+        where: {
+          id: existingPost.circle.id
+        },
+        data: {
+          postsCount: {
+            decrement: 1
+          }
+        }
+      });
+    }
 
     await syncPostTags(tx, {
       postId: existingPost.id,
@@ -2287,10 +2496,16 @@ export async function updatePost(
           circleName: existingPost.circle.name,
           circleSlug: existingPost.circle.slug,
           postType: parsed.data.postType,
-          title: parsed.data.title
+          title: parsed.data.title,
+          moderationStatus: nextStatus,
+          reviewNote: nextStatus === ContentStatus.PENDING_REVIEW ? moderation.reviewNote : null
         }
       }
     });
+
+    if (nextStatus === ContentStatus.PENDING_REVIEW) {
+      return;
+    }
 
     const addedMentionUsernames = newMentionUsernames.filter(
       (username) => !previousMentionUsernames.has(username.toLowerCase())
@@ -2317,9 +2532,18 @@ export async function updatePost(
 
   return {
     ok: true,
-    message: "帖子已更新。",
+    message:
+      existingPost.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? "帖子已更新。"
+        : moderation.message ?? "帖子已更新，内容重新进入审核。",
     postId: existingPost.id,
-    circleSlug: existingPost.circle.slug
+    circleSlug: existingPost.circle.slug,
+    status:
+      existingPost.status === ContentStatus.PUBLISHED &&
+      moderation.status === ContentStatus.PUBLISHED
+        ? ContentStatus.PUBLISHED
+        : ContentStatus.PENDING_REVIEW
   };
 }
 

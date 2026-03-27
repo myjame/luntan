@@ -74,7 +74,11 @@ export async function createPostAction(
   revalidatePath(`/circles/${result.circleSlug}`);
   revalidatePath(`/posts/${result.postId}`);
 
-  redirect(`/posts/${result.postId}?result=created` as Route);
+  redirect(
+    (result.status === "PUBLISHED"
+      ? `/posts/${result.postId}?result=created`
+      : `/circles/${result.circleSlug}?result=post-pending&message=${encodeURIComponent(result.message ?? "帖子已进入审核队列。")}`) as Route
+  );
 }
 
 export async function updatePostAction(
@@ -106,7 +110,11 @@ export async function updatePostAction(
   revalidatePath("/circles");
   revalidatePath(`/circles/${result.circleSlug}`);
   revalidatePath(`/posts/${result.postId}`);
-  redirect(`/posts/${result.postId}?result=updated` as Route);
+  redirect(
+    (result.status === "PUBLISHED"
+      ? `/posts/${result.postId}?result=updated`
+      : `/circles/${result.circleSlug}?result=post-pending&message=${encodeURIComponent(result.message ?? "帖子已进入审核队列。")}`) as Route
+  );
 }
 
 export async function deletePostAction(formData: FormData) {
@@ -160,7 +168,9 @@ export async function createCommentAction(
     revalidatePath(`/posts/${postId}`);
   }
 
-  redirect(`/posts/${postId}?result=comment-created#comments` as Route);
+  redirect(
+    `/posts/${postId}?result=${result.status === "PUBLISHED" ? "comment-created" : "comment-pending"}#comments` as Route
+  );
 }
 
 export async function updateCommentAction(
@@ -186,7 +196,9 @@ export async function updateCommentAction(
 
   if (typeof postId === "string" && postId.trim()) {
     revalidatePath(`/posts/${postId}`);
-    redirect(`/posts/${postId}?result=comment-updated#comment-${commentId}` as Route);
+    redirect(
+      `/posts/${postId}?result=${result.status === "PUBLISHED" ? "comment-updated" : "comment-pending"}#comment-${commentId}` as Route
+    );
   }
 
   redirect("/" as Route);

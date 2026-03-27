@@ -128,6 +128,44 @@ function toDisplayName(user: {
   return user.profile?.nickname ?? user.username;
 }
 
+async function getBlockRelation(
+  client: Prisma.TransactionClient | typeof prisma,
+  input: {
+    viewerId: string;
+    targetUserId: string;
+  }
+) {
+  const [blockedByViewer, blockedViewer] = await Promise.all([
+    client.userBlock.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: input.viewerId,
+          blockedId: input.targetUserId
+        }
+      },
+      select: {
+        id: true
+      }
+    }),
+    client.userBlock.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: input.targetUserId,
+          blockedId: input.viewerId
+        }
+      },
+      select: {
+        id: true
+      }
+    })
+  ]);
+
+  return {
+    blockedByViewer: Boolean(blockedByViewer),
+    blockedViewer: Boolean(blockedViewer)
+  };
+}
+
 function toFollowCard(user: UserFollowCardRecord): UserFollowCardItem {
   return {
     id: user.id,
@@ -643,6 +681,18 @@ export async function followUser(followerId: string, username: string) {
   }
 
   return prisma.$transaction(async (tx) => {
+    const blockRelation = await getBlockRelation(tx, {
+      viewerId: followerId,
+      targetUserId: targetUser.id
+    });
+
+    if (blockRelation.blockedByViewer || blockRelation.blockedViewer) {
+      return {
+        ok: false,
+        message: "当前存在屏蔽关系，暂时不能建立关注。"
+      } as const;
+    }
+
     const existingFollow = await tx.userFollow.findUnique({
       where: {
         followerId_followingId: {
@@ -761,6 +811,142 @@ export async function unfollowUser(followerId: string, username: string) {
     return {
       ok: true,
       message: `已取消关注 ${toDisplayName(targetUser)}。`
+    } as const;
+  });
+}
+
+export async function blockUser(blockerId: string, username: string) {
+  const targetUser = await prisma.user.findFirst({
+    where: {
+      username,
+      status: {
+        in: [UserStatus.ACTIVE, UserStatus.MUTED, UserStatus.BANNED]
+      }
+    },
+    select: {
+      id: true,
+      username: true,
+      profile: {
+        select: {
+          nickname: true
+        }
+      }
+    }
+  });
+
+  if (!targetUser) {
+    return {
+      ok: false,
+      message: "未找到要屏蔽的用户。"
+    } as const;
+  }
+
+  if (targetUser.id === blockerId) {
+    return {
+      ok: false,
+      message: "不能屏蔽自己。"
+    } as const;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const existingBlock = await tx.userBlock.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId,
+          blockedId: targetUser.id
+        }
+      }
+    });
+
+    if (!existingBlock) {
+      await tx.userBlock.create({
+        data: {
+          blockerId,
+          blockedId: targetUser.id
+        }
+      });
+    }
+
+    await tx.userFollow.deleteMany({
+      where: {
+        OR: [
+          {
+            followerId: blockerId,
+            followingId: targetUser.id
+          },
+          {
+            followerId: targetUser.id,
+            followingId: blockerId
+          }
+        ]
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: blockerId,
+        action: "block_user",
+        entityType: "user_block",
+        entityId: targetUser.id,
+        payloadJson: {
+          targetUsername: targetUser.username
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      message: `已屏蔽 ${toDisplayName(targetUser)}。`
+    } as const;
+  });
+}
+
+export async function unblockUser(blockerId: string, username: string) {
+  const targetUser = await prisma.user.findFirst({
+    where: {
+      username
+    },
+    select: {
+      id: true,
+      username: true,
+      profile: {
+        select: {
+          nickname: true
+        }
+      }
+    }
+  });
+
+  if (!targetUser || targetUser.id === blockerId) {
+    return {
+      ok: false,
+      message: "未找到对应的屏蔽关系。"
+    } as const;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.userBlock.deleteMany({
+      where: {
+        blockerId,
+        blockedId: targetUser.id
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: blockerId,
+        action: "unblock_user",
+        entityType: "user_block",
+        entityId: targetUser.id,
+        payloadJson: {
+          targetUsername: targetUser.username
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      message: `已取消屏蔽 ${toDisplayName(targetUser)}。`
     } as const;
   });
 }
@@ -897,9 +1083,31 @@ export async function getPublicUserProfile(username: string, viewerId?: string |
               select: {
                 id: true
               }
+            }),
+            prisma.userBlock.findUnique({
+              where: {
+                blockerId_blockedId: {
+                  blockerId: viewerId,
+                  blockedId: user.id
+                }
+              },
+              select: {
+                id: true
+              }
+            }),
+            prisma.userBlock.findUnique({
+              where: {
+                blockerId_blockedId: {
+                  blockerId: user.id,
+                  blockedId: viewerId
+                }
+              },
+              select: {
+                id: true
+              }
             })
           ])
-        : Promise.resolve<[null, null]>([null, null]),
+        : Promise.resolve<[null, null, null, null]>([null, null, null, null]),
       listPostsByAuthorId({
         authorId: user.id,
         includeAnonymous: false,
@@ -937,10 +1145,12 @@ export async function getPublicUserProfile(username: string, viewerId?: string |
       favoriteCount
     },
     relation: {
-      canFollow: Boolean(viewerId && viewerId !== user.id),
+      canFollow: Boolean(viewerId && viewerId !== user.id && !relation[2] && !relation[3]),
       isFollowing: Boolean(relation[0]),
       followsViewer: Boolean(relation[1]),
-      isMutual: Boolean(relation[0] && relation[1])
+      isMutual: Boolean(relation[0] && relation[1]),
+      blockedByViewer: Boolean(relation[2]),
+      blockedViewer: Boolean(relation[3])
     },
     recentPosts,
     recentComments,

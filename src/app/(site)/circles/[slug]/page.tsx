@@ -66,6 +66,14 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "post-pending") {
+    return {
+      className: "border-sky-500/16 bg-sky-500/8 text-sky-900",
+      title: "帖子已进入审核",
+      message: message ?? "这篇帖子暂时不会进入公开列表，审核后会通知你。"
+    };
+  }
+
   return null;
 }
 

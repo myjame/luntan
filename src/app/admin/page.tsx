@@ -36,8 +36,20 @@ const queues: Array<{
     actionLabel: "查看圈子管理"
   },
   {
+    title: "内容审核队列",
+    body: "处理新用户观察期内容和命中疑似风险词的帖子、评论，审核结果会触发站内通知。",
+    href: "/admin/moderation/reviews",
+    actionLabel: "进入内容审核"
+  },
+  {
+    title: "举报处理面板",
+    body: "统一接收举报，并执行结案、删帖删评、禁言和封禁动作。",
+    href: "/admin/moderation/reports",
+    actionLabel: "处理举报"
+  },
+  {
     title: "管理员工具位",
-    body: "首版先提供密码重置工具，其余审核和圈子入口已经独立接进后台首页。",
+    body: "密码重置、敏感词查看和操作日志查询都已经挂到后台导航里。",
     href: "/admin/password-reset",
     actionLabel: "打开工具页"
   }
@@ -69,12 +81,18 @@ export default async function AdminPage() {
         <p className="eyebrow">后台总览</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">先把治理链路做厚，再把社区放开。</h2>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-          后台首页已经接入真实统计、待审账号预览和圈子管理入口，当前可以直接沿着用户审核、圈子审核、圈子管理的顺序继续推进。
+          后台首页已经接入真实统计、待审账号预览，以及内容审核、举报处理和圈子治理入口，当前可以直接沿着审核和治理主链路继续推进。
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <ButtonLink href="/admin/users/reviews">进入用户审核</ButtonLink>
           <ButtonLink href="/admin/users" variant="secondary">
             查看用户管理
+          </ButtonLink>
+          <ButtonLink href="/admin/moderation/reviews" variant="secondary">
+            内容审核
+          </ButtonLink>
+          <ButtonLink href="/admin/moderation/reports" variant="secondary">
+            举报处理
           </ButtonLink>
           <ButtonLink href="/admin/circles/reviews" variant="secondary">
             圈子审核

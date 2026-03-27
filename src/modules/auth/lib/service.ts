@@ -17,6 +17,7 @@ import {
   profileSchema,
   registerSchema
 } from "@/modules/auth/lib/validation";
+import { consumeRateLimit } from "@/server/rate-limit";
 
 function validationErrors(error: unknown) {
   if (!(error instanceof Error) || !("issues" in error)) {
@@ -50,6 +51,19 @@ export async function registerUser(rawInput: Record<string, FormDataEntryValue |
       fieldErrors: {
         captchaAnswer: "人机校验答案不正确或已过期"
       }
+    };
+  }
+
+  const rateLimit = await consumeRateLimit({
+    key: `register:${parsed.data.username.toLowerCase()}:${parsed.data.email.toLowerCase()}`,
+    limit: 3,
+    windowMs: 10 * 60 * 1000
+  });
+
+  if (!rateLimit.ok) {
+    return {
+      ok: false,
+      message: "注册提交过于频繁，请稍后再试。"
     };
   }
 
@@ -145,6 +159,18 @@ export async function loginUser(rawInput: Record<string, FormDataEntryValue | un
   }
 
   const identifier = parsed.data.identifier.toLowerCase();
+  const rateLimit = await consumeRateLimit({
+    key: `login:${identifier}`,
+    limit: 6,
+    windowMs: 10 * 60 * 1000
+  });
+
+  if (!rateLimit.ok) {
+    return {
+      ok: false,
+      message: "登录尝试过于频繁，请 10 分钟后再试。"
+    };
+  }
 
   const user = await prisma.user.findFirst({
     where: {
