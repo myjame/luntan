@@ -14,7 +14,16 @@ import { prisma } from "@/server/db/prisma";
 
 import type { AuthUserRole, AuthUserStatus } from "@/modules/auth/lib/types";
 
-const adminUserSelect = {
+const adminReviewerSelect = {
+  username: true,
+  profile: {
+    select: {
+      nickname: true
+    }
+  }
+} satisfies Prisma.UserSelect;
+
+const adminUserListSelect = {
   id: true,
   username: true,
   email: true,
@@ -33,11 +42,62 @@ const adminUserSelect = {
     }
   },
   reviewedBy: {
+    select: adminReviewerSelect
+  }
+} satisfies Prisma.UserSelect;
+
+const adminUserDetailSelect = {
+  ...adminUserListSelect,
+  profile: {
     select: {
-      username: true,
-      profile: {
+      nickname: true,
+      avatarUrl: true,
+      bio: true,
+      featuredBadgeId: true,
+      titleBadgeId: true,
+      featuredBadge: {
         select: {
-          nickname: true
+          id: true,
+          name: true
+        }
+      },
+      titleBadge: {
+        select: {
+          id: true,
+          name: true
+        }
+      }
+    }
+  },
+  settings: {
+    select: {
+      directMessagePermission: true,
+      homepageLastFeedChannel: true
+    }
+  },
+  userBadges: {
+    orderBy: [{ grantedAt: "desc" }],
+    select: {
+      id: true,
+      reason: true,
+      expiresAt: true,
+      grantedAt: true,
+      badge: {
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          description: true
+        }
+      },
+      grantedBy: {
+        select: {
+          username: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
         }
       }
     }
@@ -45,7 +105,11 @@ const adminUserSelect = {
 } satisfies Prisma.UserSelect;
 
 export type AdminUserListItem = Prisma.UserGetPayload<{
-  select: typeof adminUserSelect;
+  select: typeof adminUserListSelect;
+}>;
+
+export type AdminUserDetail = Prisma.UserGetPayload<{
+  select: typeof adminUserDetailSelect;
 }>;
 
 export type AdminReviewDecision = "APPROVE" | "REJECT";
@@ -211,7 +275,7 @@ async function paginateUsers(args: {
   const page = Math.min(normalizePageNumber(args.page), totalPages);
   const items = await prisma.user.findMany({
     where: args.where,
-    select: adminUserSelect,
+    select: adminUserListSelect,
     orderBy: args.orderBy,
     skip: (page - 1) * args.pageSize,
     take: args.pageSize
@@ -395,15 +459,7 @@ export async function getAdminUserDetail(userId: string) {
     where: {
       id: userId
     },
-    include: {
-      profile: true,
-      settings: true,
-      reviewedBy: {
-        include: {
-          profile: true
-        }
-      }
-    }
+    select: adminUserDetailSelect
   });
 }
 

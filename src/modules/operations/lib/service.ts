@@ -13,10 +13,13 @@ import {
   type Prisma
 } from "@/generated/prisma/client";
 import {
+  assignUserBadgeSchema,
   badgeSchema,
   bannerSchema,
   pointRuleSchema,
-  recommendationSlotSchema
+  removeUserBadgeSchema,
+  recommendationSlotSchema,
+  updateUserIdentitySchema
 } from "@/modules/operations/lib/validation";
 import { prisma } from "@/server/db/prisma";
 
@@ -159,6 +162,21 @@ export type AdminPointRuleItem = Prisma.PointRuleGetPayload<{
 export type AdminBadgeItem = Prisma.BadgeGetPayload<{
   select: typeof adminBadgeSelect;
 }>;
+
+export async function listActiveBadgesForAssignment() {
+  return prisma.badge.findMany({
+    where: {
+      isActive: true
+    },
+    select: {
+      id: true,
+      kind: true,
+      name: true,
+      description: true
+    },
+    orderBy: [{ kind: "asc" }, { name: "asc" }]
+  });
+}
 
 export async function getOperationOverview() {
   const now = new Date();
@@ -809,6 +827,339 @@ export async function upsertBadge(
     message: parsed.data.id
       ? `配置《${badge.name}》已更新。`
       : `配置《${badge.name}》已创建。`
+  };
+}
+
+export async function assignBadgeToUser(
+  adminId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = assignUserBadgeSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查授予信息后再提交。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const expiresAtValue = parseOptionalDateInput(parsed.data.expiresAt, "end");
+
+  if (expiresAtValue === null) {
+    return {
+      ok: false,
+      message: "过期时间格式不正确。"
+    };
+  }
+
+  const [user, badge, existing] = await Promise.all([
+    prisma.user.findUnique({
+      where: {
+        id: parsed.data.userId
+      },
+      select: {
+        id: true,
+        username: true
+      }
+    }),
+    prisma.badge.findUnique({
+      where: {
+        id: parsed.data.badgeId
+      },
+      select: {
+        id: true,
+        name: true,
+        kind: true,
+        isActive: true
+      }
+    }),
+    prisma.userBadge.findFirst({
+      where: {
+        userId: parsed.data.userId,
+        badgeId: parsed.data.badgeId
+      },
+      select: {
+        id: true
+      }
+    })
+  ]);
+
+  if (!user) {
+    return {
+      ok: false,
+      message: "未找到要授予身份的用户。"
+    };
+  }
+
+  if (!badge || !badge.isActive) {
+    return {
+      ok: false,
+      message: "目标勋章或头衔不存在，或当前未启用。"
+    };
+  }
+
+  if (existing) {
+    return {
+      ok: false,
+      message: "该用户已经拥有这个勋章或头衔。"
+    };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.userBadge.create({
+      data: {
+        userId: user.id,
+        badgeId: badge.id,
+        grantedById: adminId,
+        reason: parsed.data.reason ?? null,
+        expiresAt: expiresAtValue ?? null
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "assign_user_badge",
+        entityType: "user_badge",
+        entityId: `${user.id}:${badge.id}`,
+        payloadJson: {
+          userId: user.id,
+          username: user.username,
+          badgeId: badge.id,
+          badgeName: badge.name,
+          badgeKind: badge.kind,
+          reason: parsed.data.reason ?? null,
+          expiresAt: expiresAtValue?.toISOString() ?? null
+        }
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: `已向 @${user.username} 授予${badge.kind === BadgeKind.TITLE ? "头衔" : "勋章"}《${badge.name}》。`,
+    username: user.username
+  };
+}
+
+export async function removeUserBadge(
+  adminId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = removeUserBadgeSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查授予记录后再操作。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const record = await prisma.userBadge.findUnique({
+    where: {
+      id: parsed.data.userBadgeId
+    },
+    select: {
+      id: true,
+      userId: true,
+      badgeId: true,
+      user: {
+        select: {
+          id: true,
+          username: true,
+          profile: {
+            select: {
+              featuredBadgeId: true,
+              titleBadgeId: true
+            }
+          }
+        }
+      },
+      badge: {
+        select: {
+          id: true,
+          name: true,
+          kind: true
+        }
+      }
+    }
+  });
+
+  if (!record || record.userId !== parsed.data.userId) {
+    return {
+      ok: false,
+      message: "未找到对应的授予记录。"
+    };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.userBadge.delete({
+      where: {
+        id: record.id
+      }
+    });
+
+    if (
+      record.user.profile?.featuredBadgeId === record.badge.id ||
+      record.user.profile?.titleBadgeId === record.badge.id
+    ) {
+      await tx.userProfile.update({
+        where: {
+          userId: record.user.id
+        },
+        data: {
+          ...(record.user.profile?.featuredBadgeId === record.badge.id
+            ? { featuredBadgeId: null }
+            : {}),
+          ...(record.user.profile?.titleBadgeId === record.badge.id
+            ? { titleBadgeId: null }
+            : {})
+        }
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "remove_user_badge",
+        entityType: "user_badge",
+        entityId: record.id,
+        payloadJson: {
+          userId: record.user.id,
+          username: record.user.username,
+          badgeId: record.badge.id,
+          badgeName: record.badge.name,
+          badgeKind: record.badge.kind
+        }
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: `已移除 @${record.user.username} 的${record.badge.kind === BadgeKind.TITLE ? "头衔" : "勋章"}《${record.badge.name}》。`,
+    username: record.user.username
+  };
+}
+
+export async function updateUserIdentityDisplay(
+  adminId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = updateUserIdentitySchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查展示位配置后再提交。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      id: parsed.data.userId
+    },
+    select: {
+      id: true,
+      username: true
+    }
+  });
+
+  if (!user) {
+    return {
+      ok: false,
+      message: "未找到对应的用户。"
+    };
+  }
+
+  const grantedBadges = await prisma.userBadge.findMany({
+    where: {
+      userId: user.id
+    },
+    select: {
+      badgeId: true,
+      badge: {
+        select: {
+          kind: true
+        }
+      }
+    }
+  });
+
+  const grantedBadgeIds = new Set(grantedBadges.map((item) => item.badgeId));
+  const badgeKindMap = new Map(grantedBadges.map((item) => [item.badgeId, item.badge.kind]));
+
+  if (parsed.data.featuredBadgeId && !grantedBadgeIds.has(parsed.data.featuredBadgeId)) {
+    return {
+      ok: false,
+      message: "精选勋章必须来自用户已获得的勋章列表。"
+    };
+  }
+
+  if (
+    parsed.data.featuredBadgeId &&
+    badgeKindMap.get(parsed.data.featuredBadgeId) !== BadgeKind.BADGE
+  ) {
+    return {
+      ok: false,
+      message: "精选勋章位置只能选择勋章类型。"
+    };
+  }
+
+  if (parsed.data.titleBadgeId && !grantedBadgeIds.has(parsed.data.titleBadgeId)) {
+    return {
+      ok: false,
+      message: "当前头衔必须来自用户已获得的头衔列表。"
+    };
+  }
+
+  if (parsed.data.titleBadgeId && badgeKindMap.get(parsed.data.titleBadgeId) !== BadgeKind.TITLE) {
+    return {
+      ok: false,
+      message: "当前头衔位置只能选择头衔类型。"
+    };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.userProfile.upsert({
+      where: {
+        userId: user.id
+      },
+      update: {
+        featuredBadgeId: parsed.data.featuredBadgeId ?? null,
+        titleBadgeId: parsed.data.titleBadgeId ?? null
+      },
+      create: {
+        userId: user.id,
+        nickname: user.username,
+        featuredBadgeId: parsed.data.featuredBadgeId ?? null,
+        titleBadgeId: parsed.data.titleBadgeId ?? null
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "update_user_identity_display",
+        entityType: "user_profile",
+        entityId: user.id,
+        payloadJson: {
+          userId: user.id,
+          username: user.username,
+          featuredBadgeId: parsed.data.featuredBadgeId ?? null,
+          titleBadgeId: parsed.data.titleBadgeId ?? null
+        }
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: `已更新 @${user.username} 的公开身份展示。`,
+    username: user.username
   };
 }
 

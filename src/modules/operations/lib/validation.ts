@@ -94,3 +94,21 @@ export const badgeSchema = z.object({
   grantCondition: optionalTrimmedString(300),
   isActive: z.enum(["true", "false"]).transform((value) => value === "true")
 });
+
+export const assignUserBadgeSchema = z.object({
+  userId: z.string().trim().min(1, "缺少用户标识。"),
+  badgeId: z.string().trim().min(1, "请选择要授予的勋章或头衔。"),
+  reason: optionalTrimmedString(200),
+  expiresAt: optionalTrimmedString(20)
+});
+
+export const removeUserBadgeSchema = z.object({
+  userId: z.string().trim().min(1, "缺少用户标识。"),
+  userBadgeId: z.string().trim().min(1, "缺少授予记录标识。")
+});
+
+export const updateUserIdentitySchema = z.object({
+  userId: z.string().trim().min(1, "缺少用户标识。"),
+  featuredBadgeId: optionalId(),
+  titleBadgeId: optionalId()
+});

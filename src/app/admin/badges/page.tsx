@@ -187,10 +187,13 @@ export default async function AdminBadgesPage({
         <p className="eyebrow">后台 / 勋章头衔</p>
         <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">身份标识要有规则感，也要有社区气质。</h2>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-          这里用于维护勋章和头衔定义，包括前台展示名、图标、说明文案和授予条件。当前先打通后台配置，后续再接自动授予或人工发放。
+          这里用于维护勋章和头衔定义，包括前台展示名、图标、说明文案和授予条件。人工授予与展示位设置已经接到用户详情页，后续再补自动授予规则。
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <ButtonLink href="/admin/points">查看积分规则</ButtonLink>
+          <ButtonLink href="/admin/users" variant="secondary">
+            去用户详情授予
+          </ButtonLink>
           <ButtonLink href="/admin/logs" variant="secondary">
             查看操作日志
           </ButtonLink>

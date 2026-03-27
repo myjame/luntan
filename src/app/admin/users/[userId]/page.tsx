@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
-import { ButtonLink } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { adminReviewUserAction } from "@/modules/auth/actions";
 import {
@@ -10,6 +10,13 @@ import {
   getAdminUserStatusMeta
 } from "@/modules/auth/lib/admin";
 import { requireSuperAdmin } from "@/modules/auth/lib/guards";
+import {
+  assignUserBadgeAction,
+  removeUserBadgeAction,
+  updateUserIdentityDisplayAction
+} from "@/modules/operations/actions";
+import { badgeKindLabel } from "@/modules/operations/lib/constants";
+import { listActiveBadgesForAssignment } from "@/modules/operations/lib/service";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -66,6 +73,30 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "badge-assigned") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "身份已授予",
+      message: message ?? "勋章或头衔已经授予给该用户。"
+    };
+  }
+
+  if (result === "badge-removed") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "身份已移除",
+      message: message ?? "勋章或头衔授予关系已经解除。"
+    };
+  }
+
+  if (result === "identity-updated") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "展示位已更新",
+      message: message ?? "用户公开展示的勋章和头衔已经刷新。"
+    };
+  }
+
   return null;
 }
 
@@ -91,7 +122,10 @@ export default async function AdminUserDetailPage({
   await requireSuperAdmin();
 
   const [{ userId }, query] = await Promise.all([params, searchParams]);
-  const user = await getAdminUserDetail(userId);
+  const [user, badgeOptions] = await Promise.all([
+    getAdminUserDetail(userId),
+    listActiveBadgesForAssignment()
+  ]);
 
   if (!user) {
     notFound();
@@ -105,6 +139,10 @@ export default async function AdminUserDetailPage({
   const displayName = user.profile?.nickname ?? user.username;
   const backLabel = query.from === "dashboard" ? "返回后台首页" : "返回列表";
   const currentDetailHref = buildCurrentDetailHref(user.id, returnTo, query.from);
+  const grantedBadgeIds = new Set(user.userBadges.map((item) => item.badge.id));
+  const grantedBadgeOptions = user.userBadges.filter((item) => item.badge.kind === "BADGE");
+  const grantedTitleOptions = user.userBadges.filter((item) => item.badge.kind === "TITLE");
+  const availableBadgeOptions = badgeOptions.filter((badge) => !grantedBadgeIds.has(badge.id));
 
   return (
     <div className="space-y-6 pt-2">
@@ -230,7 +268,157 @@ export default async function AdminUserDetailPage({
               </div>
             )}
           </SurfaceCard>
+
+          <SurfaceCard>
+            <p className="eyebrow">身份展示位</p>
+            <div className="mt-4 space-y-2 text-sm leading-7 text-slate-600">
+              <p>当前精选勋章：{user.profile?.featuredBadge?.name ?? "未设置"}</p>
+              <p>当前公开头衔：{user.profile?.titleBadge?.name ?? "未设置"}</p>
+            </div>
+
+            <form action={updateUserIdentityDisplayAction} className="mt-4 space-y-4">
+              <input name="userId" type="hidden" value={user.id} />
+              <input name="returnTo" type="hidden" value={currentDetailHref} />
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">精选勋章</span>
+                <select
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                  defaultValue={user.profile?.featuredBadgeId ?? ""}
+                  name="featuredBadgeId"
+                >
+                  <option value="">不展示精选勋章</option>
+                  {grantedBadgeOptions.map((item) => (
+                    <option key={item.id} value={item.badge.id}>
+                      {item.badge.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">公开头衔</span>
+                <select
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                  defaultValue={user.profile?.titleBadgeId ?? ""}
+                  name="titleBadgeId"
+                >
+                  <option value="">不展示头衔</option>
+                  {grantedTitleOptions.map((item) => (
+                    <option key={item.id} value={item.badge.id}>
+                      {item.badge.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <Button type="submit">保存展示位</Button>
+            </form>
+          </SurfaceCard>
         </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <SurfaceCard className="overflow-hidden">
+          <div className="border-b border-black/8 px-6 py-5">
+            <p className="eyebrow">已授予身份</p>
+            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">当前勋章与头衔</h3>
+          </div>
+
+          {user.userBadges.length === 0 ? (
+            <div className="px-6 py-6 text-sm leading-7 text-slate-600">
+              当前还没有授予任何勋章或头衔。
+            </div>
+          ) : (
+            <div className="divide-y divide-black/6">
+              {user.userBadges.map((item) => (
+                <div className="grid gap-4 px-6 py-5 md:grid-cols-[160px_minmax(0,1fr)_180px_120px]" key={item.id}>
+                  <div>
+                    <span className="inline-flex rounded-full border border-black/10 bg-white/82 px-3 py-1 text-xs font-semibold text-slate-700">
+                      {badgeKindLabel[item.badge.kind]}
+                    </span>
+                    <p className="mt-3 text-base font-semibold text-slate-950">{item.badge.name}</p>
+                  </div>
+                  <div className="text-sm leading-7 text-slate-600">
+                    <p>{item.reason ?? item.badge.description ?? "暂无补充说明。"}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      授予人：{item.grantedBy?.profile?.nickname ?? item.grantedBy?.username ?? "系统或管理员"}
+                    </p>
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    <p>授予时间：{formatDateTime(item.grantedAt)}</p>
+                    <p className="mt-1">过期时间：{formatDateTime(item.expiresAt)}</p>
+                  </div>
+                  <div className="flex items-start justify-end">
+                    <form action={removeUserBadgeAction}>
+                      <input name="userId" type="hidden" value={user.id} />
+                      <input name="userBadgeId" type="hidden" value={item.id} />
+                      <input name="returnTo" type="hidden" value={currentDetailHref} />
+                      <Button type="submit" variant="ghost">
+                        移除
+                      </Button>
+                    </form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SurfaceCard>
+
+        <SurfaceCard className="h-fit">
+          <p className="eyebrow">人工授予</p>
+          <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">给当前用户追加身份标识</h3>
+          <p className="mt-3 text-sm leading-7 text-slate-600">
+            手工授予适合首版运营场景，后续如果要按条件自动发放，可以继续基于这套关系表扩展。
+          </p>
+
+          <form action={assignUserBadgeAction} className="mt-5 space-y-4">
+            <input name="userId" type="hidden" value={user.id} />
+            <input name="returnTo" type="hidden" value={currentDetailHref} />
+
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">选择勋章或头衔</span>
+              <select
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                defaultValue=""
+                disabled={availableBadgeOptions.length === 0}
+                name="badgeId"
+              >
+                <option value="" disabled>
+                  {availableBadgeOptions.length === 0 ? "当前没有可继续授予的身份配置" : "请选择一项身份配置"}
+                </option>
+                {availableBadgeOptions.map((badge) => (
+                  <option key={badge.id} value={badge.id}>
+                    {badgeKindLabel[badge.kind]} · {badge.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">授予原因</span>
+              <textarea
+                className="mt-2 min-h-28 w-full rounded-[1.3rem] border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                defaultValue=""
+                name="reason"
+                placeholder="例如：连续组织活动、内容质量稳定、社区氛围建设突出。"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">过期日期</span>
+              <input
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                name="expiresAt"
+                type="date"
+              />
+            </label>
+
+            <Button disabled={availableBadgeOptions.length === 0} type="submit">
+              授予身份
+            </Button>
+          </form>
+        </SurfaceCard>
       </div>
     </div>
   );
