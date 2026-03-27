@@ -1,15 +1,21 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { ReportForm } from "@/modules/moderation/components/report-form";
 import { deletePostAction, votePollAction } from "@/modules/posts/actions";
 import { PostCommentForm } from "@/modules/posts/components/post-comment-form";
 import { PostCommentThread } from "@/modules/posts/components/post-comment-thread";
 import { getPostTypeMeta } from "@/modules/posts/lib/constants";
-import { getPublicPostDetail, listPostComments } from "@/modules/posts/lib/service";
+import {
+  getPublicPostDetail,
+  getPublicPostSeoDetail,
+  listPostComments
+} from "@/modules/posts/lib/service";
 import {
   togglePostFavoriteAction,
   togglePostLikeAction
@@ -38,6 +44,49 @@ type SearchParams = Promise<{
   replyTo?: string;
   editComment?: string;
 }>;
+
+export async function generateMetadata({
+  params
+}: {
+  params: PageParams;
+}): Promise<Metadata> {
+  const { postId } = await params;
+  const post = await getPublicPostSeoDetail(postId);
+
+  if (!post) {
+    return {
+      title: "帖子不存在",
+      description: "该帖子不存在、未公开或已经下线。",
+      robots: {
+        index: false,
+        follow: false
+      }
+    };
+  }
+
+  const authorName = post.isAnonymous
+    ? "匿名用户"
+    : post.author.profile?.nickname ?? post.author.username;
+  const postTypeLabel = getPostTypeMeta(post.postType).label;
+
+  return buildSeoMetadata({
+    title: post.title,
+    description:
+      post.excerpt?.trim() ||
+      `${authorName} 在《${post.circle.name}》发布了一条${postTypeLabel}，欢迎查看完整内容和评论互动。`,
+    path: `/posts/${post.id}`,
+    keywords: [
+      post.circle.name,
+      post.circle.category.name,
+      postTypeLabel,
+      ...post.tags.map((item) => item.tag.name),
+      "社区帖子"
+    ],
+    type: "article",
+    publishedTime: post.publishedAt ?? post.createdAt,
+    modifiedTime: post.updatedAt
+  });
+}
 
 function formatDateTime(value: Date | null | undefined) {
   if (!value) {

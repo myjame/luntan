@@ -1,8 +1,10 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { ButtonLink } from "@/components/ui/button";
 import { ListCard, MetricCard, SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { listPublicCircles } from "@/modules/community/lib/service";
 import { getHomeOperationContent } from "@/modules/operations/lib/service";
@@ -23,6 +25,14 @@ import {
 } from "@/lib/site-data";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = buildSeoMetadata({
+  title: "公开兴趣社区首页",
+  description:
+    "公开浏览、审核后互动、圈子沉淀与后台治理放在同一套 Next.js 工程中，首版先跑通社区主闭环，再补强发现、运营和增长能力。",
+  path: "/",
+  keywords: ["兴趣社区", "公开社区", "圈子", "帖子", "社区治理", "Next.js"]
+});
 
 type SearchParams = Promise<{
   feed?: string;

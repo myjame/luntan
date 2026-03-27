@@ -164,6 +164,28 @@ const postDetailSelect = {
   }
 } satisfies Prisma.PostSelect;
 
+const postSeoSelect = {
+  ...postFeedSelect,
+  status: true,
+  deletedAt: true,
+  updatedAt: true,
+  circle: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      status: true,
+      deletedAt: true,
+      category: {
+        select: {
+          name: true,
+          slug: true
+        }
+      }
+    }
+  }
+} satisfies Prisma.PostSelect;
+
 const editablePostSelect = {
   id: true,
   authorId: true,
@@ -1280,6 +1302,27 @@ export async function getPublicPostDetail(
         }
       : null
   };
+}
+
+export async function getPublicPostSeoDetail(postId: string) {
+  const post = await prisma.post.findUnique({
+    where: {
+      id: postId
+    },
+    select: postSeoSelect
+  });
+
+  if (
+    !post ||
+    post.deletedAt ||
+    post.status !== ContentStatus.PUBLISHED ||
+    post.circle.deletedAt ||
+    post.circle.status !== CircleStatus.ACTIVE
+  ) {
+    return null;
+  }
+
+  return post;
 }
 
 export async function listPostComments(postId: string) {

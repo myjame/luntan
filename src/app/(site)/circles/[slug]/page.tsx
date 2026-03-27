@@ -1,8 +1,10 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { followCircleAction, unfollowCircleAction } from "@/modules/community/actions";
 import { getPublicCircleDetail } from "@/modules/community/lib/service";
@@ -24,6 +26,42 @@ type SearchParams = Promise<{
   result?: string;
   message?: string;
 }>;
+
+export async function generateMetadata({
+  params
+}: {
+  params: PageParams;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const detail = await getPublicCircleDetail(slug);
+
+  if (!detail) {
+    return {
+      title: "圈子不存在",
+      description: "该圈子不存在、暂未公开或已经下线。",
+      robots: {
+        index: false,
+        follow: false
+      }
+    };
+  }
+
+  return buildSeoMetadata({
+    title: `${detail.circle.name}圈子`,
+    description:
+      detail.circle.intro?.trim() ||
+      detail.circle.announcement?.trim() ||
+      `进入《${detail.circle.name}》，查看圈内帖子、成员角色和讨论节奏。`,
+    path: `/circles/${detail.circle.slug}`,
+    keywords: [
+      detail.circle.name,
+      detail.circle.category.name,
+      "兴趣圈子",
+      "社区讨论"
+    ],
+    image: detail.circle.coverUrl ?? detail.circle.iconUrl
+  });
+}
 
 function formatDate(value: Date | null | undefined) {
   if (!value) {
