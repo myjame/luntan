@@ -33,6 +33,8 @@ export const adminSections: Array<{
   { href: "/admin/users", label: "用户管理", description: "查看用户状态、角色和历史审核结果。" },
   { href: "/admin/circles/reviews", label: "圈子审核", description: "处理圈子创建申请并决定是否上线。" },
   { href: "/admin/circles", label: "圈子管理", description: "查看圈子状态、圈主信息和基础运营数据。" },
+  { href: "/admin/posts", label: "帖子管理", description: "处理帖子置顶、精华、推荐和后台删帖动作。" },
+  { href: "/admin/comments", label: "评论管理", description: "查看评论状态并执行管理员删评。" },
   { href: "/admin/moderation/reviews", label: "内容审核", description: "处理新用户和风险词命中的待审内容。" },
   { href: "/admin/moderation/reports", label: "举报处理", description: "对举报执行结案、删帖删评、禁言和封号。" },
   { href: "/admin/moderation/users", label: "治理用户", description: "统一维护禁言、封禁和解除限制动作。" },
