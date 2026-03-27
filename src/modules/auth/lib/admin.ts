@@ -7,6 +7,7 @@ import {
   ReportTargetType,
   UserRole,
   UserStatus,
+  WorkflowStatus,
   type Prisma
 } from "@/generated/prisma/client";
 import { createNotification } from "@/modules/notifications/lib/service";
@@ -101,6 +102,19 @@ const adminUserDetailSelect = {
         }
       }
     }
+  },
+  deletionRequests: {
+    where: {
+      status: WorkflowStatus.PENDING
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: 1,
+    select: {
+      id: true,
+      reason: true,
+      status: true,
+      createdAt: true
+    }
   }
 } satisfies Prisma.UserSelect;
 
@@ -113,9 +127,46 @@ export type AdminUserDetail = Prisma.UserGetPayload<{
 }>;
 
 export type AdminReviewDecision = "APPROVE" | "REJECT";
+export type AdminAccountDeletionDecision = "APPROVE" | "REJECT";
 
 export type AdminUserQueryResult = {
   items: AdminUserListItem[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+const adminDeletionRequestSelect = {
+  id: true,
+  reason: true,
+  status: true,
+  reviewNote: true,
+  createdAt: true,
+  reviewedAt: true,
+  user: {
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      status: true,
+      deletionRequestedAt: true,
+      profile: {
+        select: {
+          nickname: true,
+          avatarUrl: true
+        }
+      }
+    }
+  }
+} satisfies Prisma.AccountDeletionRequestSelect;
+
+export type AdminPendingDeletionItem = Prisma.AccountDeletionRequestGetPayload<{
+  select: typeof adminDeletionRequestSelect;
+}>;
+
+export type AdminPendingDeletionQueryResult = {
+  items: AdminPendingDeletionItem[];
   totalCount: number;
   page: number;
   pageSize: number;
@@ -224,6 +275,51 @@ function buildUserSearchConditions(query: string): Prisma.UserWhereInput[] {
   ];
 }
 
+function buildDeletionRequestSearchConditions(query: string): Prisma.AccountDeletionRequestWhereInput[] {
+  const trimmed = query.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  return [
+    {
+      user: {
+        is: {
+          username: {
+            contains: trimmed,
+            mode: "insensitive"
+          }
+        }
+      }
+    },
+    {
+      user: {
+        is: {
+          email: {
+            contains: trimmed,
+            mode: "insensitive"
+          }
+        }
+      }
+    },
+    {
+      user: {
+        is: {
+          profile: {
+            is: {
+              nickname: {
+                contains: trimmed,
+                mode: "insensitive"
+              }
+            }
+          }
+        }
+      }
+    }
+  ];
+}
+
 function parseDateInput(value: string | undefined, boundary: "start" | "end") {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return undefined;
@@ -276,6 +372,34 @@ async function paginateUsers(args: {
   const items = await prisma.user.findMany({
     where: args.where,
     select: adminUserListSelect,
+    orderBy: args.orderBy,
+    skip: (page - 1) * args.pageSize,
+    take: args.pageSize
+  });
+
+  return {
+    items,
+    totalCount,
+    page,
+    pageSize: args.pageSize,
+    totalPages
+  };
+}
+
+async function paginateDeletionRequests(args: {
+  where: Prisma.AccountDeletionRequestWhereInput;
+  orderBy: Prisma.AccountDeletionRequestOrderByWithRelationInput[];
+  page?: number;
+  pageSize: number;
+}): Promise<AdminPendingDeletionQueryResult> {
+  const totalCount = await prisma.accountDeletionRequest.count({
+    where: args.where
+  });
+  const totalPages = Math.max(1, Math.ceil(totalCount / args.pageSize));
+  const page = Math.min(normalizePageNumber(args.page), totalPages);
+  const items = await prisma.accountDeletionRequest.findMany({
+    where: args.where,
+    select: adminDeletionRequestSelect,
     orderBy: args.orderBy,
     skip: (page - 1) * args.pageSize,
     take: args.pageSize
@@ -408,6 +532,41 @@ export async function listPendingRegistrationUsers(filters?: {
         : {})
     },
     orderBy: [{ createdAt: "asc" }, { username: "asc" }],
+    page: filters?.page,
+    pageSize: Math.min(filters?.take ?? 12, 50)
+  });
+}
+
+export async function listPendingAccountDeletionRequests(filters?: {
+  query?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  page?: number;
+  take?: number;
+}) {
+  const searchConditions = buildDeletionRequestSearchConditions(filters?.query ?? "");
+  const createdAt = buildCreatedAtFilter(filters?.createdFrom, filters?.createdTo);
+
+  return paginateDeletionRequests({
+    where: {
+      status: WorkflowStatus.PENDING,
+      user: {
+        is: {
+          status: UserStatus.PENDING_DELETION
+        }
+      },
+      ...(createdAt
+        ? {
+            createdAt
+          }
+        : {}),
+      ...(searchConditions.length > 0
+        ? {
+            OR: searchConditions
+          }
+        : {})
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     page: filters?.page,
     pageSize: Math.min(filters?.take ?? 12, 50)
   });
@@ -586,6 +745,225 @@ export async function reviewUserRegistration(
         input.decision === "APPROVE"
           ? `已通过 ${user.username} 的注册申请。`
           : `已拒绝 ${user.username} 的注册申请。`
+    } as const;
+  });
+}
+
+export async function reviewAccountDeletionRequest(
+  adminId: string,
+  input: {
+    requestId: string;
+    decision: AdminAccountDeletionDecision;
+    reviewNote?: string | null;
+  }
+) {
+  const normalizedNote = input.reviewNote?.trim() || null;
+
+  if (input.decision === "REJECT" && !normalizedNote) {
+    return {
+      ok: false,
+      message: "拒绝注销申请时请填写审核说明。"
+    } as const;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const request = await tx.accountDeletionRequest.findUnique({
+      where: {
+        id: input.requestId
+      },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        reason: true,
+        createdAt: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            role: true,
+            status: true
+          }
+        }
+      }
+    });
+
+    if (!request || !request.user) {
+      return {
+        ok: false,
+        message: "未找到对应的注销申请。"
+      } as const;
+    }
+
+    if (request.status !== WorkflowStatus.PENDING) {
+      return {
+        ok: false,
+        message: "该注销申请已被处理，请刷新后重试。"
+      } as const;
+    }
+
+    if (request.user.status !== UserStatus.PENDING_DELETION) {
+      return {
+        ok: false,
+        message: "账号状态已变化，当前申请无法继续处理。"
+      } as const;
+    }
+
+    if (request.user.role === UserRole.SUPER_ADMIN) {
+      return {
+        ok: false,
+        message: "暂不支持直接注销超级管理员账号。"
+      } as const;
+    }
+
+    const reviewedAt = new Date();
+
+    if (input.decision === "APPROVE") {
+      const anonymizedUsername = `deleted_${request.user.id}`;
+      const anonymizedEmail = `deleted+${request.user.id}@deleted.local`;
+      const defaultReviewNote = "注销审核通过，账号已执行脱敏保留。";
+
+      await tx.user.update({
+        where: {
+          id: request.user.id
+        },
+        data: {
+          username: anonymizedUsername,
+          email: anonymizedEmail,
+          status: UserStatus.DISABLED,
+          reviewNote: normalizedNote ?? defaultReviewNote,
+          reviewedAt,
+          reviewedById: adminId,
+          deletionRequestedAt: null,
+          disabledAt: reviewedAt,
+          mutedUntil: null,
+          bannedAt: null
+        }
+      });
+
+      await tx.userProfile.upsert({
+        where: {
+          userId: request.user.id
+        },
+        update: {
+          nickname: "已注销用户",
+          avatarUrl: null,
+          bio: "该账号已完成注销，历史内容按平台规则保留并脱敏展示。",
+          featuredBadgeId: null,
+          titleBadgeId: null
+        },
+        create: {
+          userId: request.user.id,
+          nickname: "已注销用户",
+          avatarUrl: null,
+          bio: "该账号已完成注销，历史内容按平台规则保留并脱敏展示。",
+          featuredBadgeId: null,
+          titleBadgeId: null
+        }
+      });
+
+      await tx.accountDeletionRequest.update({
+        where: {
+          id: request.id
+        },
+        data: {
+          status: WorkflowStatus.APPROVED,
+          reviewNote: normalizedNote,
+          reviewedAt,
+          reviewedById: adminId,
+          anonymizedAt: reviewedAt
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: adminId,
+          action: "approve_account_deletion",
+          entityType: "user",
+          entityId: request.user.id,
+          payloadJson: {
+            requestId: request.id,
+            originalUsername: request.user.username,
+            anonymizedUsername,
+            originalEmail: request.user.email,
+            anonymizedEmail,
+            reviewNote: normalizedNote
+          }
+        }
+      });
+
+      await createNotification(tx, {
+        userId: request.user.id,
+        type: NotificationType.SYSTEM,
+        payload: {
+          title: "你的注销申请已通过",
+          body: "账号已完成注销与脱敏处理，历史内容将按平台规则继续保留展示。",
+          href: "/account-status?status=DISABLED"
+        }
+      });
+
+      return {
+        ok: true,
+        message: `已通过 ${request.user.username} 的注销申请并执行脱敏。`
+      } as const;
+    }
+
+    await tx.user.update({
+      where: {
+        id: request.user.id
+      },
+      data: {
+        status: UserStatus.ACTIVE,
+        reviewNote: normalizedNote,
+        reviewedAt,
+        reviewedById: adminId,
+        deletionRequestedAt: null
+      }
+    });
+
+    await tx.accountDeletionRequest.update({
+      where: {
+        id: request.id
+      },
+      data: {
+        status: WorkflowStatus.REJECTED,
+        reviewNote: normalizedNote,
+        reviewedAt,
+        reviewedById: adminId
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "reject_account_deletion",
+        entityType: "user",
+        entityId: request.user.id,
+        payloadJson: {
+          requestId: request.id,
+          username: request.user.username,
+          reason: request.reason,
+          reviewNote: normalizedNote
+        }
+      }
+    });
+
+    await createNotification(tx, {
+      userId: request.user.id,
+      type: NotificationType.SYSTEM,
+      payload: {
+        title: "你的注销申请未通过",
+        body: normalizedNote
+          ? `注销申请未通过：${normalizedNote}`
+          : "注销申请暂未通过，你可以根据提示补充信息后再次提交。",
+        href: "/account-status?status=ACTIVE"
+      }
+    });
+
+    return {
+      ok: true,
+      message: `已拒绝 ${request.user.username} 的注销申请。`
     } as const;
   });
 }

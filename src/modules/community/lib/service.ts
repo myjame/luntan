@@ -3,13 +3,16 @@ import "server-only";
 import {
   CircleManagerRole,
   CircleStatus,
+  ContentStatus,
   ModerationActionType,
+  NotificationType,
   ReportTargetType,
   UserStatus,
   WorkflowStatus,
   type Prisma,
   type UserRole
 } from "@/generated/prisma/client";
+import { createNotification } from "@/modules/notifications/lib/service";
 import { prisma } from "@/server/db/prisma";
 
 import { circleApplicationSchema, circleManagerSchema, circleProfileSchema } from "@/modules/community/lib/validation";
@@ -1432,5 +1435,141 @@ export async function removeCircleManager(
   return {
     ok: true,
     message: `已移除 ${getActorDisplayName(relation.user)} 的圈管权限。`
+  } as const;
+}
+
+export async function deleteCirclePostByManager(
+  actor: {
+    id: string;
+    username: string;
+    role: UserRole;
+    profile?: { nickname: string | null } | null;
+  },
+  circleId: string,
+  input: {
+    postId: string;
+    reason?: string | null;
+  }
+) {
+  const normalizedReason = input.reason?.trim() || null;
+  const accessContext = await getCircleAccessContext({
+    circleId,
+    actorId: actor.id,
+    actorRole: actor.role
+  });
+
+  if (!accessContext?.canManage) {
+    return {
+      ok: false,
+      message: "你当前没有处理这个圈子帖子的权限。"
+    } as const;
+  }
+
+  const post = await prisma.post.findFirst({
+    where: {
+      id: input.postId,
+      circleId,
+      deletedAt: null,
+      status: {
+        not: ContentStatus.DELETED
+      }
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      authorId: true,
+      circle: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      }
+    }
+  });
+
+  if (!post) {
+    return {
+      ok: false,
+      message: "未找到可处理的帖子，可能已被删除。"
+    } as const;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.post.update({
+      where: {
+        id: post.id
+      },
+      data: {
+        status: ContentStatus.DELETED,
+        deletedAt: new Date()
+      }
+    });
+
+    if (post.status === ContentStatus.PUBLISHED) {
+      await tx.circle.update({
+        where: {
+          id: post.circle.id
+        },
+        data: {
+          postsCount: {
+            decrement: 1
+          }
+        }
+      });
+    }
+
+    await tx.moderationAction.create({
+      data: {
+        actorId: actor.id,
+        targetUserId: post.authorId,
+        actionType: ModerationActionType.DELETE_POST,
+        targetType: ReportTargetType.POST,
+        targetId: post.id,
+        reason: normalizedReason,
+        metadataJson: {
+          scope: "circle",
+          circleId: post.circle.id,
+          circleName: post.circle.name,
+          circleSlug: post.circle.slug
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "delete_post_by_circle_manager",
+        entityType: "post",
+        entityId: post.id,
+        payloadJson: {
+          actor: getActorDisplayName(actor),
+          title: post.title,
+          circleName: post.circle.name,
+          circleSlug: post.circle.slug,
+          reason: normalizedReason
+        }
+      }
+    });
+
+    if (post.authorId !== actor.id) {
+      await createNotification(tx, {
+        userId: post.authorId,
+        type: NotificationType.SYSTEM,
+        payload: {
+          title: "你的帖子已被圈内管理员移除",
+          body: normalizedReason
+            ? `帖子《${post.title}》已被圈内管理员移除，原因：${normalizedReason}`
+            : `帖子《${post.title}》已被圈内管理员移除。`,
+          href: `/circles/${post.circle.slug}`
+        }
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    message: `已删除帖子《${post.title}》。`
   } as const;
 }

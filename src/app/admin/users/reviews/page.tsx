@@ -4,9 +4,10 @@ import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
 import { AdminPagination } from "@/components/layout/admin-pagination";
 import { ButtonLink } from "@/components/ui/button";
 import { MetricCard, SurfaceCard } from "@/components/ui/card";
-import { adminReviewUserAction } from "@/modules/auth/actions";
+import { adminReviewDeletionAction, adminReviewUserAction } from "@/modules/auth/actions";
 import {
   getAdminUserDirectorySummary,
+  listPendingAccountDeletionRequests,
   listPendingRegistrationUsers
 } from "@/modules/auth/lib/admin";
 
@@ -94,6 +95,22 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "deletion-approved") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "注销审核已通过",
+      message: message ?? "账号已完成注销与脱敏处理。"
+    };
+  }
+
+  if (result === "deletion-rejected") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "注销审核已拒绝",
+      message: message ?? "该账号已恢复为激活状态。"
+    };
+  }
+
   if (result === "error") {
     return {
       className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
@@ -119,8 +136,15 @@ export default async function AdminUserReviewsPage({
   const createdFrom = sanitizeDateInput(params.createdFrom);
   const createdTo = sanitizeDateInput(params.createdTo);
   const page = normalizePage(params.page);
-  const [pendingUsers, summary] = await Promise.all([
+  const [pendingUsers, pendingDeletionRequests, summary] = await Promise.all([
     listPendingRegistrationUsers({
+      query,
+      createdFrom,
+      createdTo,
+      page,
+      take: 12
+    }),
+    listPendingAccountDeletionRequests({
       query,
       createdFrom,
       createdTo,
@@ -148,9 +172,11 @@ export default async function AdminUserReviewsPage({
 
       <div className="rounded-[2rem] border border-black/8 bg-[rgba(255,251,246,0.92)] p-8 shadow-[0_24px_60px_rgba(24,32,45,0.08)]">
         <p className="eyebrow">后台 / 用户审核</p>
-        <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">注册审核先收口，登录权限才会稳定。</h2>
+        <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
+          注册审核与注销审核一起收口，账号状态才会稳定。
+        </h2>
         <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">
-          这里直接承接注册审核队列。审批通过后账号会进入 active，审批拒绝后会进入 rejected，并写入后台治理日志。
+          这里同时承接注册审核与注销审核。注册审批通过后账号会进入 active；注销审批通过后会执行脱敏并保留历史内容。
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <ButtonLink href="/admin/users">查看用户管理</ButtonLink>
@@ -223,7 +249,7 @@ export default async function AdminUserReviewsPage({
 
       {pendingUsers.items.length === 0 ? (
         <SurfaceCard className="grain-panel">
-          <p className="eyebrow">审核队列</p>
+          <p className="eyebrow">注册审核队列</p>
           <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">当前没有待审核账号</h3>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
             队列已经清空。可以去用户管理页继续查看历史审核结果，或者继续推进圈子与内容模块。
@@ -327,6 +353,103 @@ export default async function AdminUserReviewsPage({
           />
         </div>
       )}
+
+      <SurfaceCard className="overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="eyebrow">注销审核队列</p>
+            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+              待注销账号需要人工确认后再执行脱敏
+            </h3>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              通过后账号会改为已注销身份并保留历史内容；拒绝后账号恢复为激活状态。
+            </p>
+          </div>
+          <div className="rounded-full border border-black/10 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700">
+            当前待办：{pendingDeletionRequests.totalCount}
+          </div>
+        </div>
+
+        {pendingDeletionRequests.items.length === 0 ? (
+          <div className="mt-6 rounded-[1.35rem] border border-dashed border-black/10 bg-white/70 px-5 py-6 text-sm leading-7 text-slate-600">
+            当前没有待审核的注销申请。
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-5 xl:grid-cols-2">
+            {pendingDeletionRequests.items.map((request) => {
+              const displayName = request.user.profile?.nickname ?? request.user.username;
+              const detailHref = `/admin/users/${request.user.id}?returnTo=${encodeURIComponent(returnTo)}`;
+
+              return (
+                <div
+                  className="rounded-[1.5rem] border border-black/8 bg-white/78 p-5 shadow-[0_18px_42px_rgba(24,32,45,0.06)]"
+                  key={request.id}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(24,32,45,0.08)] text-sm font-semibold text-slate-700">
+                        {getInitial(displayName)}
+                      </div>
+                      <div>
+                        <p className="text-base font-semibold text-slate-950">{displayName}</p>
+                        <p className="mt-1 text-sm text-slate-500">@{request.user.username}</p>
+                        <p className="mt-1 text-sm text-slate-600">{request.user.email}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-1 text-xs font-semibold text-orange-800">
+                      待注销
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-[1.1rem] border border-black/8 bg-white/72 px-4 py-3 text-sm leading-7 text-slate-600">
+                    <p>申请时间：{formatDateTime(request.createdAt)}</p>
+                    <p>账号状态：{request.user.status}</p>
+                    <p className="mt-2">申请原因：{request.reason ?? "用户未填写补充原因。"}</p>
+                  </div>
+
+                  <form action={adminReviewDeletionAction} className="mt-4 space-y-3">
+                    <input name="requestId" type="hidden" value={request.id} />
+                    <input name="returnTo" type="hidden" value={returnTo} />
+                    <label className="block">
+                      <span className="text-sm font-semibold text-slate-700">审核说明</span>
+                      <textarea
+                        className="mt-2 min-h-24 w-full rounded-[1.15rem] border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                        defaultValue=""
+                        name="reviewNote"
+                        placeholder="通过时可填写处理说明；拒绝时必须填写原因。"
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-3">
+                      <Link
+                        className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white/80 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:-translate-y-0.5"
+                        href={detailHref}
+                      >
+                        查看账号详情
+                      </Link>
+                      <button
+                        className="inline-flex items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(197,94,61,0.28)] transition hover:-translate-y-0.5"
+                        name="decision"
+                        type="submit"
+                        value="APPROVE"
+                      >
+                        通过并注销
+                      </button>
+                      <button
+                        className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100"
+                        name="decision"
+                        type="submit"
+                        value="REJECT"
+                      >
+                        拒绝申请
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </SurfaceCard>
     </div>
   );
 }

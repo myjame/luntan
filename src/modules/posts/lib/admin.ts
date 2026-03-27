@@ -623,34 +623,34 @@ export async function adminDeleteComment(
       }
     });
 
-    if (comment.status === ContentStatus.PUBLISHED) {
-      const publishedReplyCount = descendantReplies.filter(
-        (item) => item.status === ContentStatus.PUBLISHED
-      ).length;
+    const publishedCountRemoved =
+      (comment.status === ContentStatus.PUBLISHED ? 1 : 0) +
+      descendantReplies.filter((item) => item.status === ContentStatus.PUBLISHED).length;
 
+    if (publishedCountRemoved > 0) {
       await tx.post.update({
         where: {
           id: comment.postId
         },
         data: {
           commentCount: {
-            decrement: 1 + publishedReplyCount
+            decrement: publishedCountRemoved
           }
         }
       });
+    }
 
-      if (comment.parentId) {
-        await tx.comment.update({
-          where: {
-            id: comment.parentId
-          },
-          data: {
-            replyCount: {
-              decrement: 1
-            }
+    if (comment.parentId && comment.status === ContentStatus.PUBLISHED) {
+      await tx.comment.update({
+        where: {
+          id: comment.parentId
+        },
+        data: {
+          replyCount: {
+            decrement: 1
           }
-        });
-      }
+        }
+      });
     }
 
     await tx.moderationAction.create({

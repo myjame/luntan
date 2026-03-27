@@ -6,6 +6,7 @@ import { SurfaceCard } from "@/components/ui/card";
 import { requireActiveUser } from "@/modules/auth/lib/guards";
 import {
   addCircleManagerAction,
+  deleteCirclePostAction,
   removeCircleManagerAction
 } from "@/modules/community/actions";
 import { CircleSettingsForm } from "@/modules/community/components/circle-settings-form";
@@ -13,6 +14,7 @@ import {
   getManageableCircleBySlug,
   listCircleCategories
 } from "@/modules/community/lib/service";
+import { listCirclePostsBySlug } from "@/modules/posts/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,21 @@ type SearchParams = Promise<{
   result?: string;
   message?: string;
 }>;
+
+const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+function formatDateTime(value: Date | null | undefined) {
+  if (!value) {
+    return "暂无记录";
+  }
+
+  return dateFormatter.format(value);
+}
 
 function getFeedback(result?: string, message?: string) {
   if (result === "updated") {
@@ -47,6 +64,14 @@ function getFeedback(result?: string, message?: string) {
       className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
       title: "圈管已移除",
       message: message ?? "对应用户的圈管权限已经撤回。"
+    };
+  }
+
+  if (result === "post-deleted") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "帖子已移除",
+      message: message ?? "圈内删帖动作已完成并写入日志。"
     };
   }
 
@@ -85,12 +110,16 @@ export default async function CircleManagePage({
     searchParams,
     requireActiveUser()
   ]);
-  const [categories, accessContext] = await Promise.all([
+  const [categories, accessContext, managedPosts] = await Promise.all([
     listCircleCategories(),
     getManageableCircleBySlug({
       slug,
       actorId: user.id,
       actorRole: user.role
+    }),
+    listCirclePostsBySlug({
+      slug,
+      take: 10
     })
   ]);
 
@@ -130,10 +159,10 @@ export default async function CircleManagePage({
             </div>
             <p className="eyebrow mt-4">圈主管理</p>
             <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-950">
-              先把资料、规则和基础角色关系管顺，圈内治理再继续往下接。
+              资料、角色和圈内基础治理放在同一入口，运营动作更顺手。
             </h1>
             <p className="mt-4 text-sm leading-8 text-slate-600">
-              {getActorLabel(accessContext.actorLabel)} 当前先开放圈子资料维护和圈管关系入口，帖子置顶、圈内删帖、禁言和举报处理会在后续步骤接入。
+              {getActorLabel(accessContext.actorLabel)} 这里已经接入圈内删帖动作，剩余的圈内禁言和举报处理会继续补齐。
             </p>
           </div>
 
@@ -292,11 +321,57 @@ export default async function CircleManagePage({
             )}
           </SurfaceCard>
 
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">圈内帖子治理</p>
+            <p className="mt-4 text-sm leading-7 text-slate-600">
+              圈主、圈管和超管都可以在这里执行圈内删帖。删除采用软删除，并写入治理日志。
+            </p>
+
+            {managedPosts.length === 0 ? (
+              <div className="mt-4 rounded-[1.15rem] border border-dashed border-black/10 bg-white/72 px-4 py-5 text-sm leading-7 text-slate-600">
+                当前圈子还没有可治理的已发布帖子。
+              </div>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {managedPosts.map((post) => (
+                  <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-4" key={post.id}>
+                    <div className="space-y-2">
+                      <Link className="text-base font-semibold text-slate-950 transition hover:text-[var(--color-accent)]" href={`/posts/${post.id}`}>
+                        {post.title}
+                      </Link>
+                      <p className="text-sm text-slate-600">
+                        作者：{post.author.profile?.nickname ?? post.author.username} · 评论 {post.commentCount}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        发布时间：{formatDateTime(post.publishedAt ?? post.createdAt)}
+                      </p>
+                    </div>
+
+                    <form action={deleteCirclePostAction} className="mt-4 space-y-3">
+                      <input name="circleId" type="hidden" value={accessContext.circle.id} />
+                      <input name="postId" type="hidden" value={post.id} />
+                      <input name="returnTo" type="hidden" value={returnTo} />
+                      <textarea
+                        className="min-h-20 w-full rounded-[1rem] border border-black/10 bg-white/80 px-3 py-2 text-sm leading-6 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                        defaultValue=""
+                        name="reason"
+                        placeholder="可选：填写删帖原因，系统会通知作者。"
+                      />
+                      <Button type="submit" variant="secondary">
+                        移除帖子
+                      </Button>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SurfaceCard>
+
           <SurfaceCard className="h-fit bg-[linear-gradient(155deg,rgba(255,255,255,0.94),rgba(23,107,108,0.08))]">
             <p className="eyebrow">后续治理</p>
             <ul className="mt-5 space-y-3 text-sm leading-7 text-slate-600">
-              <li>帖子置顶、删帖和圈内公告流会在 Step 6 结合帖子系统一起接入。</li>
-              <li>圈内举报处理、禁言和更完整的操作日志会在 Step 9 与 Step 10 继续补齐。</li>
+              <li>帖子置顶、圈内禁言和更完整的公告流还会继续补齐。</li>
+              <li>圈内举报处理与平台级联动会在后续治理步骤继续完善。</li>
               <li>这一页目前先承担圈子资料维护和角色入口，不会假装已经具备完整治理闭环。</li>
             </ul>
           </SurfaceCard>

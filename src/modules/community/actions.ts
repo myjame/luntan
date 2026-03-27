@@ -8,6 +8,7 @@ import type { ActionState } from "@/modules/auth/lib/types";
 import { requireActiveUser, requireSuperAdmin } from "@/modules/auth/lib/guards";
 import {
   addCircleManager,
+  deleteCirclePostByManager,
   followCircle,
   removeCircleManager,
   reviewCircleApplication,
@@ -229,6 +230,46 @@ export async function removeCircleManagerAction(formData: FormData) {
   redirect(
     buildRedirectPath(returnTo, {
       result: result.ok ? "manager-removed" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function deleteCirclePostAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const circleId = formData.get("circleId");
+  const postId = formData.get("postId");
+  const reason = formData.get("reason");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/circles");
+
+  if (
+    typeof circleId !== "string" ||
+    !circleId.trim() ||
+    typeof postId !== "string" ||
+    !postId.trim()
+  ) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少圈子或帖子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await deleteCirclePostByManager(user, circleId, {
+    postId,
+    reason: typeof reason === "string" ? reason : null
+  });
+
+  revalidatePath("/");
+  revalidatePath("/square");
+  revalidatePath("/circles");
+  revalidatePath(returnTo);
+  revalidatePath(`/posts/${postId}`);
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "post-deleted" : "error",
       message: result.message
     }) as Route
   );

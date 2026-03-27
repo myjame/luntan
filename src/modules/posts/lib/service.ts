@@ -1845,6 +1845,11 @@ export async function updateComment(
     };
   }
 
+  const nextStatus =
+    existingComment.status === ContentStatus.PUBLISHED
+      ? ContentStatus.PUBLISHED
+      : moderation.status;
+
   await prisma.$transaction(async (tx) => {
     await tx.commentRevision.create({
       data: {
@@ -1854,12 +1859,6 @@ export async function updateComment(
         contentHtml: existingComment.contentHtml
       }
     });
-
-    const nextStatus =
-      existingComment.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
-        ? ContentStatus.PUBLISHED
-        : ContentStatus.PENDING_REVIEW;
 
     await tx.comment.update({
       where: {
@@ -1875,35 +1874,6 @@ export async function updateComment(
         reviewedById: nextStatus === ContentStatus.PENDING_REVIEW ? null : undefined
       }
     });
-
-    if (
-      existingComment.status === ContentStatus.PUBLISHED &&
-      nextStatus === ContentStatus.PENDING_REVIEW
-    ) {
-      await tx.post.update({
-        where: {
-          id: existingComment.post.id
-        },
-        data: {
-          commentCount: {
-            decrement: 1
-          }
-        }
-      });
-
-      if (existingComment.parentId) {
-        await tx.comment.update({
-          where: {
-            id: existingComment.parentId
-          },
-          data: {
-            replyCount: {
-              decrement: 1
-            }
-          }
-        });
-      }
-    }
 
     if (nextStatus === ContentStatus.PENDING_REVIEW) {
       return;
@@ -1935,15 +1905,10 @@ export async function updateComment(
   return {
     ok: true,
     message:
-      existingComment.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
+      nextStatus === ContentStatus.PUBLISHED
         ? "评论已更新。"
-        : moderation.message ?? "评论已更新，内容重新进入审核。",
-    status:
-      existingComment.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
-        ? ContentStatus.PUBLISHED
-        : ContentStatus.PENDING_REVIEW
+        : moderation.message ?? "评论已更新，内容进入审核队列。",
+    status: nextStatus
   } as const;
 }
 
@@ -1989,16 +1954,18 @@ export async function deleteComment(input: {
   }
 
   await prisma.$transaction(async (tx) => {
-    const descendantReplies = await tx.comment.findMany({
-      where: {
-        rootId: comment.id,
-        status: ContentStatus.PUBLISHED,
-        deletedAt: null
-      },
-      select: {
-        id: true
-      }
-    });
+    const descendantReplies = comment.parentId
+      ? []
+      : await tx.comment.findMany({
+          where: {
+            rootId: comment.id,
+            deletedAt: null
+          },
+          select: {
+            id: true,
+            status: true
+          }
+        });
 
     const targetIds = [comment.id, ...descendantReplies.map((item) => item.id)];
 
@@ -2014,18 +1981,24 @@ export async function deleteComment(input: {
       }
     });
 
-    await tx.post.update({
-      where: {
-        id: comment.post.id
-      },
-      data: {
-        commentCount: {
-          decrement: targetIds.length
-        }
-      }
-    });
+    const publishedCountRemoved =
+      (comment.status === ContentStatus.PUBLISHED ? 1 : 0) +
+      descendantReplies.filter((item) => item.status === ContentStatus.PUBLISHED).length;
 
-    if (comment.parentId) {
+    if (publishedCountRemoved > 0) {
+      await tx.post.update({
+        where: {
+          id: comment.post.id
+        },
+        data: {
+          commentCount: {
+            decrement: publishedCountRemoved
+          }
+        }
+      });
+    }
+
+    if (comment.parentId && comment.status === ContentStatus.PUBLISHED) {
       await tx.comment.update({
         where: {
           id: comment.parentId
@@ -2612,6 +2585,11 @@ export async function updatePost(
     };
   }
 
+  const nextStatus =
+    existingPost.status === ContentStatus.PUBLISHED
+      ? ContentStatus.PUBLISHED
+      : moderation.status;
+
   await prisma.$transaction(async (tx) => {
     await tx.postRevision.create({
       data: {
@@ -2622,12 +2600,6 @@ export async function updatePost(
         contentHtml: existingPost.contentHtml
       }
     });
-
-    const nextStatus =
-      existingPost.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
-        ? ContentStatus.PUBLISHED
-        : ContentStatus.PENDING_REVIEW;
 
     await tx.post.update({
       where: {
@@ -2652,19 +2624,6 @@ export async function updatePost(
               : undefined
       }
     });
-
-    if (existingPost.status === ContentStatus.PUBLISHED && nextStatus === ContentStatus.PENDING_REVIEW) {
-      await tx.circle.update({
-        where: {
-          id: existingPost.circle.id
-        },
-        data: {
-          postsCount: {
-            decrement: 1
-          }
-        }
-      });
-    }
 
     await syncPostTags(tx, {
       postId: existingPost.id,
@@ -2741,17 +2700,12 @@ export async function updatePost(
   return {
     ok: true,
     message:
-      existingPost.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
+      nextStatus === ContentStatus.PUBLISHED
         ? "帖子已更新。"
-        : moderation.message ?? "帖子已更新，内容重新进入审核。",
+        : moderation.message ?? "帖子已更新，内容进入审核队列。",
     postId: existingPost.id,
     circleSlug: existingPost.circle.slug,
-    status:
-      existingPost.status === ContentStatus.PUBLISHED &&
-      moderation.status === ContentStatus.PUBLISHED
-        ? ContentStatus.PUBLISHED
-        : ContentStatus.PENDING_REVIEW
+    status: nextStatus
   };
 }
 

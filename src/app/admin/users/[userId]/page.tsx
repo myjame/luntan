@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
-import { adminReviewUserAction } from "@/modules/auth/actions";
+import { adminReviewDeletionAction, adminReviewUserAction } from "@/modules/auth/actions";
 import {
   getAdminUserDetail,
   getAdminUserRoleMeta,
@@ -62,6 +62,22 @@ function getFeedback(result?: string, message?: string) {
       className: "border-rose-500/16 bg-rose-500/8 text-rose-900",
       title: "审核已拒绝",
       message: message ?? "该账号已转为拒绝状态。"
+    };
+  }
+
+  if (result === "deletion-approved") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "注销审核已通过",
+      message: message ?? "账号已完成注销与脱敏处理。"
+    };
+  }
+
+  if (result === "deletion-rejected") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "注销审核已拒绝",
+      message: message ?? "该账号已恢复为激活状态。"
     };
   }
 
@@ -143,6 +159,7 @@ export default async function AdminUserDetailPage({
   const grantedBadgeOptions = user.userBadges.filter((item) => item.badge.kind === "BADGE");
   const grantedTitleOptions = user.userBadges.filter((item) => item.badge.kind === "TITLE");
   const availableBadgeOptions = badgeOptions.filter((badge) => !grantedBadgeIds.has(badge.id));
+  const pendingDeletionRequest = user.deletionRequests[0] ?? null;
 
   return (
     <div className="space-y-6 pt-2">
@@ -259,6 +276,45 @@ export default async function AdminUserDetailPage({
                     value="REJECT"
                   >
                     拒绝并退回
+                  </button>
+                </div>
+              </form>
+            ) : user.status === "PENDING_DELETION" && pendingDeletionRequest ? (
+              <form action={adminReviewDeletionAction} className="mt-4 space-y-4">
+                <input name="requestId" type="hidden" value={pendingDeletionRequest.id} />
+                <input name="returnTo" type="hidden" value={currentDetailHref} />
+
+                <div className="rounded-[1.25rem] border border-orange-500/20 bg-orange-500/8 px-4 py-4 text-sm leading-7 text-orange-900">
+                  <p>注销申请时间：{formatDateTime(pendingDeletionRequest.createdAt)}</p>
+                  <p className="mt-2">申请原因：{pendingDeletionRequest.reason ?? "用户未填写补充原因。"}</p>
+                </div>
+
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">审核说明</span>
+                  <textarea
+                    className="mt-2 min-h-32 w-full rounded-[1.4rem] border border-black/10 bg-white/80 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                    defaultValue=""
+                    name="reviewNote"
+                    placeholder="通过时可填写处理说明；拒绝时请填写原因。"
+                  />
+                </label>
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    className="inline-flex items-center justify-center rounded-full bg-[var(--color-accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(197,94,61,0.28)] transition hover:-translate-y-0.5"
+                    name="decision"
+                    type="submit"
+                    value="APPROVE"
+                  >
+                    通过并注销
+                  </button>
+                  <button
+                    className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-100"
+                    name="decision"
+                    type="submit"
+                    value="REJECT"
+                  >
+                    拒绝申请
                   </button>
                 </div>
               </form>

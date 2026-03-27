@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 
 import { DEFAULT_LOGIN_REDIRECT } from "@/modules/auth/lib/constants";
 import { clearSession, setSession } from "@/modules/auth/lib/session";
-import { reviewUserRegistration } from "@/modules/auth/lib/admin";
+import { reviewAccountDeletionRequest, reviewUserRegistration } from "@/modules/auth/lib/admin";
 import type { ActionState } from "@/modules/auth/lib/types";
 import {
   adminResetPassword,
@@ -28,7 +28,7 @@ function resolveReturnTo(rawValue: FormDataEntryValue | null, fallback: string) 
 function buildRedirectPath(
   returnTo: string,
   payload: {
-    result: "approved" | "rejected" | "error";
+    result: string;
     message?: string;
   }
 ) {
@@ -158,6 +158,51 @@ export async function adminReviewUserAction(formData: FormData) {
   redirect(
     buildRedirectPath(returnTo, {
       result: result.ok ? (decision === "APPROVE" ? "approved" : "rejected") : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function adminReviewDeletionAction(formData: FormData) {
+  const admin = await requireSuperAdmin();
+  const requestId = formData.get("requestId");
+  const decision = formData.get("decision");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/admin/users/reviews");
+  const reviewNote = formData.get("reviewNote");
+
+  if (typeof requestId !== "string" || !requestId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少注销申请标识。"
+      }) as Route
+    );
+  }
+
+  if (decision !== "APPROVE" && decision !== "REJECT") {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "无效的审核动作。"
+      }) as Route
+    );
+  }
+
+  const result = await reviewAccountDeletionRequest(admin.id, {
+    requestId,
+    decision,
+    reviewNote: typeof reviewNote === "string" ? reviewNote : null
+  });
+
+  if (result.ok) {
+    revalidatePath("/admin");
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/users/reviews");
+  }
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? (decision === "APPROVE" ? "deletion-approved" : "deletion-rejected") : "error",
       message: result.message
     }) as Route
   );

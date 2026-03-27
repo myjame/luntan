@@ -193,7 +193,9 @@ export default async function AdminCirclesPage({
           <div>
             <p className="eyebrow">圈子总表</p>
             <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">当前圈子与管理信息</h3>
-            <p className="mt-3 text-sm leading-7 text-slate-600">首版先建立统一查询和运营入口，后续再接帖子置顶、圈内删帖和举报处理。</p>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              这里先承接统一查询入口；圈主管理页已支持圈内删帖，帖子置顶和更细治理动作会继续补齐。
+            </p>
           </div>
           <div className="rounded-full border border-black/10 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700">
             当前结果：{circles.totalCount}
