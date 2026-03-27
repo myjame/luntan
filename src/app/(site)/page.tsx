@@ -5,6 +5,7 @@ import { ListCard, MetricCard, SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { listPublicCircles } from "@/modules/community/lib/service";
+import { getHomeOperationContent } from "@/modules/operations/lib/service";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { homeFeedChannelOptions } from "@/modules/posts/lib/constants";
 import {
@@ -41,6 +42,10 @@ function buildHomeHref(channel: string) {
   return channel === "RECOMMENDED" ? "/" : `/?feed=${channel}`;
 }
 
+function resolveOperationHref(value: string | null | undefined, fallback: string) {
+  return value && value.trim() ? value : fallback;
+}
+
 export default async function HomePage({
   searchParams
 }: {
@@ -61,7 +66,7 @@ export default async function HomePage({
     await rememberHomeFeedChannel(activeUser.id, selectedChannel);
   }
 
-  const [feedPosts, hotTags, recommendedCircles] = await Promise.all([
+  const [feedPosts, hotTags, recommendedCircles, homeOperations] = await Promise.all([
     listHomeFeedPosts({
       channel: selectedChannel,
       userId: activeUser?.id,
@@ -70,9 +75,62 @@ export default async function HomePage({
     listHotGlobalTags(8),
     listPublicCircles({
       take: 3
-    })
+    }),
+    getHomeOperationContent()
   ]);
   const circleAnimationClasses = ["fade-up delay-1", "fade-up delay-2", "fade-up delay-3"];
+  const circleCards =
+    homeOperations.recommendedCircles.length > 0
+      ? homeOperations.recommendedCircles.map((item) => ({
+          key: item.id,
+          badge: item.circle?.category.name ?? "运营推荐",
+          followersLabel: item.circle ? `${item.circle.followersCount} 关注` : "首页推荐位",
+          title: item.circle?.name ?? item.title,
+          body: item.description ?? item.circle?.intro ?? "当前推荐位暂无补充说明。",
+          href: item.linkUrl ?? (item.circle ? `/circles/${item.circle.slug}` : "/circles")
+        }))
+      : recommendedCircles.length > 0
+        ? recommendedCircles.map((circle) => ({
+            key: circle.id,
+            badge: circle.category.name,
+            followersLabel: `${circle.followersCount} 关注`,
+            title: circle.name,
+            body: circle.intro,
+            href: `/circles/${circle.slug}`
+          }))
+        : featuredCircles.map((circle) => ({
+            key: circle.name,
+            badge: circle.tone,
+            followersLabel: `${circle.members} 成员`,
+            title: circle.name,
+            body: circle.tagline,
+            href: "/circles"
+          }));
+  const spotlightCards =
+    homeOperations.topicSlots.length > 0 || homeOperations.activitySlots.length > 0
+      ? [
+          ...homeOperations.topicSlots.map((slot) => ({
+            key: slot.id,
+            meta: "今日话题",
+            title: slot.title,
+            body: slot.description ?? "把讨论入口做成首页的第一触点。",
+            href: resolveOperationHref(slot.linkUrl, "/discover")
+          })),
+          ...homeOperations.activitySlots.map((slot) => ({
+            key: slot.id,
+            meta: "推荐活动",
+            title: slot.title,
+            body: slot.description ?? "给首页补一块更有参与感的活动入口。",
+            href: resolveOperationHref(slot.linkUrl, "/discover")
+          }))
+        ].slice(0, 3)
+      : pulseTopics.map((topic) => ({
+          key: topic.title,
+          meta: topic.meta,
+          title: topic.title,
+          body: topic.body,
+          href: "/discover"
+        }));
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-20 px-6 py-10 lg:px-10 lg:py-14">
@@ -128,6 +186,64 @@ export default async function HomePage({
         </div>
       </section>
 
+      {homeOperations.banners.length > 0 ? (
+        <section className="space-y-8">
+          <SectionHeading
+            description="首页主视觉已经开始读取后台真实 Banner 配置，运营可以直接调整节奏和活动氛围。"
+            eyebrow="运营主视觉"
+            title="把社区气氛做成可运营的第一屏。"
+          />
+          <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+            <a
+              className="group relative overflow-hidden rounded-[2rem] border border-black/8 px-8 py-8 text-white shadow-[0_28px_70px_rgba(12,28,38,0.22)] transition hover:-translate-y-1"
+              href={resolveOperationHref(homeOperations.banners[0]?.linkUrl, "/")}
+              style={{
+                backgroundImage: `linear-gradient(145deg, rgba(12,28,38,0.82), rgba(25,82,83,0.72)), url(${homeOperations.banners[0]?.imageUrl ?? ""})`,
+                backgroundPosition: "center",
+                backgroundSize: "cover"
+              }}
+            >
+              <p className="eyebrow !text-[rgba(255,255,255,0.72)]">当前主 Banner</p>
+              <h2 className="mt-4 max-w-2xl text-3xl font-semibold tracking-tight sm:text-4xl">
+                {homeOperations.banners[0]?.title}
+              </h2>
+              <p className="mt-4 max-w-xl text-sm leading-7 text-[rgba(255,255,255,0.8)] sm:text-base">
+                {homeOperations.banners[0]?.subtitle ?? "运营位已经从静态占位升级为后台真实配置。"}
+              </p>
+              <div className="mt-8 inline-flex rounded-full border border-white/18 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition group-hover:bg-white/16">
+                打开当前运营入口
+              </div>
+            </a>
+
+            <div className="grid gap-5">
+              {homeOperations.banners.slice(1).map((banner, index) => (
+                <a
+                  className={`rounded-[1.7rem] border border-black/8 p-6 text-white shadow-[0_24px_60px_rgba(12,28,38,0.14)] transition hover:-translate-y-1 ${
+                    index === 0
+                      ? "bg-[linear-gradient(150deg,rgba(197,94,61,0.96),rgba(138,57,34,0.9))]"
+                      : "bg-[linear-gradient(150deg,rgba(16,63,64,0.96),rgba(23,107,108,0.92))]"
+                  }`}
+                  href={resolveOperationHref(banner.linkUrl, "/")}
+                  key={banner.id}
+                >
+                  <p className="eyebrow !text-[rgba(255,255,255,0.72)]">运营次级位</p>
+                  <h3 className="mt-3 text-2xl font-semibold tracking-tight">{banner.title}</h3>
+                  <p className="mt-3 text-sm leading-7 text-[rgba(255,255,255,0.82)]">
+                    {banner.subtitle ?? "继续把首页做成有节奏、有情绪承接的入口。"}
+                  </p>
+                </a>
+              ))}
+
+              {homeOperations.banners.length === 1 ? (
+                <div className="rounded-[1.7rem] border border-dashed border-black/10 bg-white/68 p-6 text-sm leading-7 text-slate-600">
+                  继续在后台补第二和第三个 Banner，这里会形成一个更有层次的主视觉组。
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <section className="space-y-8">
         <SectionHeading
           aside={
@@ -158,31 +274,23 @@ export default async function HomePage({
           title="圈子不是分区标签，而是有气氛的内容房间。"
         />
         <div className="grid gap-5 lg:grid-cols-3">
-          {(recommendedCircles.length > 0 ? recommendedCircles : featuredCircles).map((circle, index) => (
+          {circleCards.map((circle, index) => (
             <SurfaceCard
               className={circleAnimationClasses[index] ?? "fade-up"}
-              key={"id" in circle ? circle.id : circle.name}
+              key={circle.key}
             >
               <div className="flex items-center justify-between gap-4">
                 <span className="rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-xs font-semibold text-slate-900">
-                  {"category" in circle ? circle.category.name : circle.tone}
+                  {circle.badge}
                 </span>
-                <span className="text-sm text-slate-500">
-                  {"followersCount" in circle ? `${circle.followersCount} 关注` : `${circle.members} 成员`}
-                </span>
+                <span className="text-sm text-slate-500">{circle.followersLabel}</span>
               </div>
               <h3 className="mt-5 text-2xl font-semibold tracking-tight text-slate-950">
-                {circle.name}
+                {circle.title}
               </h3>
-              <p className="mt-3 text-sm leading-7 text-slate-600">
-                {"intro" in circle ? circle.intro : circle.tagline}
-              </p>
+              <p className="mt-3 text-sm leading-7 text-slate-600">{circle.body}</p>
               <div className="mt-6">
-                <ButtonLink
-                  className="w-full"
-                  href={"slug" in circle ? `/circles/${circle.slug}` : "/circles"}
-                  variant="secondary"
-                >
+                <ButtonLink className="w-full" href={circle.href} variant="secondary">
                   打开圈子
                 </ButtonLink>
               </div>
@@ -257,6 +365,21 @@ export default async function HomePage({
                     {topic.meta}
                   </span>
                 ))}
+          </div>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            {spotlightCards.map((item) => (
+              <a
+                className="rounded-[1.25rem] border border-black/8 bg-white/80 p-5 transition hover:-translate-y-0.5 hover:bg-white"
+                href={item.href}
+                key={item.key}
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-accent)]">
+                  {item.meta}
+                </p>
+                <h3 className="mt-3 text-lg font-semibold tracking-tight text-slate-950">{item.title}</h3>
+                <p className="mt-3 text-sm leading-7 text-slate-600">{item.body}</p>
+              </a>
+            ))}
           </div>
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             {moderationHighlights.map((item) => (

@@ -52,6 +52,18 @@ const queues: Array<{
     body: "密码重置、敏感词查看和操作日志查询都已经挂到后台导航里。",
     href: "/admin/password-reset",
     actionLabel: "打开工具页"
+  },
+  {
+    title: "首页运营位管理",
+    body: "Banner、推荐圈子、活动入口和今日话题已经接成后台真实配置，可以直接影响首页展示。",
+    href: "/admin/operations",
+    actionLabel: "配置首页运营位"
+  },
+  {
+    title: "积分与勋章配置",
+    body: "积分规则、勋章头衔和基础统计页已经作为后续增长和身份体系入口挂到后台。",
+    href: "/admin/points",
+    actionLabel: "打开激励配置"
   }
 ];
 
@@ -88,11 +100,17 @@ export default async function AdminPage() {
           <ButtonLink href="/admin/users" variant="secondary">
             查看用户管理
           </ButtonLink>
+          <ButtonLink href="/admin/operations" variant="secondary">
+            首页运营位
+          </ButtonLink>
           <ButtonLink href="/admin/moderation/reviews" variant="secondary">
             内容审核
           </ButtonLink>
           <ButtonLink href="/admin/moderation/reports" variant="secondary">
             举报处理
+          </ButtonLink>
+          <ButtonLink href="/admin/stats" variant="secondary">
+            轻量统计
           </ButtonLink>
           <ButtonLink href="/admin/circles/reviews" variant="secondary">
             圈子审核
