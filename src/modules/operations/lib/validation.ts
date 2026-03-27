@@ -112,3 +112,21 @@ export const updateUserIdentitySchema = z.object({
   featuredBadgeId: optionalId(),
   titleBadgeId: optionalId()
 });
+
+export const refreshDailyStatsSchema = z.object({
+  statDate: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return undefined;
+      }
+
+      const trimmed = value.trim();
+
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "统计日期格式无效。")
+      .optional()
+  )
+});

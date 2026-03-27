@@ -23,6 +23,7 @@ import {
 } from "@/modules/growth/lib/service";
 import { prisma } from "@/server/db/prisma";
 import { appConfig } from "@/server/config/app-config";
+import { readThroughRuntimeCache } from "@/server/runtime-cache";
 
 import type {
   HomeFeedChannelValue,
@@ -66,6 +67,7 @@ const postFeedSelect = {
   isPinned: true,
   isFeatured: true,
   isRecommended: true,
+  scoreHot: true,
   viewCount: true,
   commentCount: true,
   reactionCount: true,
@@ -673,6 +675,38 @@ function buildSquareOrderBy(sort: SquareSortValue): Prisma.PostOrderByWithRelati
       ];
 }
 
+function calculateDecayedHotScore(post: PostFeedItem, now = Date.now()) {
+  const publishedAtMs = (post.publishedAt ?? post.createdAt).getTime();
+  const ageHours = Math.max(1, (now - publishedAtMs) / (60 * 60 * 1000));
+  const interactionBoost =
+    post.commentCount * 0.4 +
+    post.reactionCount * 0.6 +
+    post.favoriteCount * 0.9 +
+    Math.log10(post.viewCount + 1);
+  const baseScore = post.scoreHot + interactionBoost;
+  const decayFactor = Math.pow(ageHours + 2, 0.58);
+
+  return baseScore / decayFactor;
+}
+
+function sortPostsByDecayedHot(posts: PostFeedItem[]) {
+  const now = Date.now();
+
+  return [...posts].sort((left, right) => {
+    if (left.isPinned !== right.isPinned) {
+      return left.isPinned ? -1 : 1;
+    }
+
+    const scoreGap = calculateDecayedHotScore(right, now) - calculateDecayedHotScore(left, now);
+
+    if (Math.abs(scoreGap) > 0.0001) {
+      return scoreGap;
+    }
+
+    return (right.publishedAt ?? right.createdAt).getTime() - (left.publishedAt ?? left.createdAt).getTime();
+  });
+}
+
 async function syncPostTags(
   tx: Prisma.TransactionClient,
   input: {
@@ -980,50 +1014,92 @@ export async function listHomeFeedPosts(input: {
     return [];
   }
 
-  return prisma.post.findMany({
-    where: {
-      status: ContentStatus.PUBLISHED,
-      deletedAt: null,
-      circle: {
-        is: {
-          status: CircleStatus.ACTIVE,
-          deletedAt: null
-        }
-      },
-      ...(input.channel === "FOLLOWING" && input.userId
-        ? {
-            OR: [
-              {
-                circle: {
-                  is: {
-                    status: CircleStatus.ACTIVE,
-                    deletedAt: null,
-                    follows: {
-                      some: {
-                        userId: input.userId
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                author: {
-                  is: {
-                    followers: {
-                      some: {
-                        followerId: input.userId
-                      }
+  const take = normalizePageTake(input.take, 6, 18);
+  const where: Prisma.PostWhereInput = {
+    status: ContentStatus.PUBLISHED,
+    deletedAt: null,
+    circle: {
+      is: {
+        status: CircleStatus.ACTIVE,
+        deletedAt: null
+      }
+    },
+    ...(input.channel === "FOLLOWING" && input.userId
+      ? {
+          OR: [
+            {
+              circle: {
+                is: {
+                  status: CircleStatus.ACTIVE,
+                  deletedAt: null,
+                  follows: {
+                    some: {
+                      userId: input.userId
                     }
                   }
                 }
               }
-            ]
-          }
-        : {})
+            },
+            {
+              author: {
+                is: {
+                  followers: {
+                    some: {
+                      followerId: input.userId
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      : {})
+  };
+
+  if (input.channel === "FOLLOWING" && input.userId) {
+    return readThroughRuntimeCache({
+      key: `posts:home:following:${input.userId}:${take}`,
+      ttlMs: 12_000,
+      loader: () =>
+        prisma.post.findMany({
+          where,
+          select: postFeedSelect,
+          orderBy: buildFeedOrderBy(input.channel),
+          take
+        })
+    });
+  }
+
+  if (input.channel === "HOT") {
+    return readThroughRuntimeCache({
+      key: `posts:home:hot:${take}`,
+      ttlMs: 12_000,
+      loader: async () => {
+        const candidates = await prisma.post.findMany({
+          where,
+          select: postFeedSelect,
+          orderBy: [
+            { isPinned: "desc" },
+            { scoreHot: "desc" },
+            { commentCount: "desc" },
+            { reactionCount: "desc" },
+            { publishedAt: "desc" }
+          ],
+          take: Math.min(take * 4, 96)
+        });
+
+        return sortPostsByDecayedHot(candidates).slice(0, take);
+      }
+    });
+  }
+
+  return prisma.post.findMany({
+    where: {
+      ...where
     },
     select: postFeedSelect,
     orderBy: buildFeedOrderBy(input.channel),
-    take: normalizePageTake(input.take, 6, 18)
+    take
   });
 }
 
@@ -1031,6 +1107,40 @@ export async function listSquarePosts(input: {
   sort: SquareSortValue;
   take?: number;
 }) {
+  const take = normalizePageTake(input.take, 12, 24);
+
+  if (input.sort === "HOT") {
+    return readThroughRuntimeCache({
+      key: `posts:square:hot:${take}`,
+      ttlMs: 12_000,
+      loader: async () => {
+        const candidates = await prisma.post.findMany({
+          where: {
+            status: ContentStatus.PUBLISHED,
+            deletedAt: null,
+            circle: {
+              is: {
+                status: CircleStatus.ACTIVE,
+                deletedAt: null
+              }
+            }
+          },
+          select: postFeedSelect,
+          orderBy: [
+            { isPinned: "desc" },
+            { scoreHot: "desc" },
+            { commentCount: "desc" },
+            { reactionCount: "desc" },
+            { publishedAt: "desc" }
+          ],
+          take: Math.min(take * 4, 96)
+        });
+
+        return sortPostsByDecayedHot(candidates).slice(0, take);
+      }
+    });
+  }
+
   return prisma.post.findMany({
     where: {
       status: ContentStatus.PUBLISHED,
@@ -1044,7 +1154,7 @@ export async function listSquarePosts(input: {
     },
     select: postFeedSelect,
     orderBy: buildSquareOrderBy(input.sort),
-    take: normalizePageTake(input.take, 12, 24)
+    take
   });
 }
 

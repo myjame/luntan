@@ -1,6 +1,7 @@
 import { AdminBreadcrumbs } from "@/components/layout/admin-breadcrumbs";
-import { ButtonLink } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { MetricCard, SurfaceCard } from "@/components/ui/card";
+import { syncDailyStatsSnapshotAction } from "@/modules/operations/actions";
 import { getStatsOverview } from "@/modules/operations/lib/service";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -23,8 +24,38 @@ function formatDateTime(value: Date) {
   return dateTimeFormatter.format(value);
 }
 
-export default async function AdminStatsPage() {
-  const data = await getStatsOverview();
+type SearchParams = Promise<{
+  result?: string;
+  message?: string;
+}>;
+
+function getFeedback(result?: string, message?: string) {
+  if (result === "synced") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "统计快照已同步",
+      message: message ?? "daily_stats 已更新，可直接查看下方趋势行。"
+    };
+  }
+
+  if (result === "error") {
+    return {
+      className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
+      title: "同步未完成",
+      message: message ?? "请检查日期输入后重试。"
+    };
+  }
+
+  return null;
+}
+
+export default async function AdminStatsPage({
+  searchParams
+}: {
+  searchParams: SearchParams;
+}) {
+  const [data, params] = await Promise.all([getStatsOverview(), searchParams]);
+  const feedback = getFeedback(params.result, params.message);
 
   return (
     <div className="space-y-6 pt-2">
@@ -47,7 +78,33 @@ export default async function AdminStatsPage() {
             查看积分规则
           </ButtonLink>
         </div>
+        <form action={syncDailyStatsSnapshotAction} className="mt-6 rounded-[1.3rem] border border-black/10 bg-white/72 p-4">
+          <input name="returnTo" type="hidden" value="/admin/stats" />
+          <div className="grid gap-3 md:grid-cols-[minmax(0,260px)_auto] md:items-end">
+            <label className="block">
+              <span className="text-sm font-semibold text-slate-700">统计日期（可选）</span>
+              <input
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white/88 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                name="statDate"
+                type="date"
+              />
+            </label>
+            <div className="flex items-center gap-3">
+              <Button type="submit" variant="secondary">
+                同步统计快照
+              </Button>
+              <p className="text-xs text-slate-500">留空默认同步今天。</p>
+            </div>
+          </div>
+        </form>
       </div>
+
+      {feedback ? (
+        <div className={`rounded-[1.5rem] border px-5 py-4 ${feedback.className}`}>
+          <p className="text-sm font-semibold">{feedback.title}</p>
+          <p className="mt-2 text-sm leading-7">{feedback.message}</p>
+        </div>
+      ) : null}
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard accent="7 天" label="新增用户" value={String(data.recentSummary.newUsers)} />

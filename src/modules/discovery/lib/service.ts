@@ -27,6 +27,7 @@ const searchPostSelect = {
   isPinned: true,
   isFeatured: true,
   isRecommended: true,
+  scoreHot: true,
   viewCount: true,
   commentCount: true,
   reactionCount: true,

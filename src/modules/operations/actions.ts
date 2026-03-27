@@ -8,6 +8,7 @@ import { requireSuperAdmin } from "@/modules/auth/lib/guards";
 import {
   assignBadgeToUser,
   removeUserBadge,
+  syncDailyStatsSnapshot,
   updateUserIdentityDisplay,
   upsertBadge,
   upsertBanner,
@@ -180,6 +181,23 @@ export async function updateUserIdentityDisplayAction(formData: FormData) {
   redirect(
     buildRedirectPath(returnTo, {
       result: result.ok ? "identity-updated" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function syncDailyStatsSnapshotAction(formData: FormData) {
+  const admin = await requireSuperAdmin();
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/admin/stats");
+  const result = await syncDailyStatsSnapshot(admin.id, toRecord(formData));
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/stats");
+  revalidatePath("/admin/logs");
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "synced" : "error",
       message: result.message
     }) as Route
   );

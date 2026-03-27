@@ -17,6 +17,7 @@ import {
   badgeSchema,
   bannerSchema,
   pointRuleSchema,
+  refreshDailyStatsSchema,
   removeUserBadgeSchema,
   recommendationSlotSchema,
   updateUserIdentitySchema
@@ -45,6 +46,68 @@ function parseOptionalDateInput(value: string | undefined, boundary: "start" | "
   );
 
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toDateLabel(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function resolveDailyStatDateRange(rawDate?: string) {
+  if (!rawDate) {
+    const anchor = new Date();
+
+    anchor.setHours(12, 0, 0, 0);
+
+    const dayStart = new Date(anchor);
+    const dayEnd = new Date(anchor);
+
+    dayStart.setHours(0, 0, 0, 0);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    return {
+      statDate: anchor,
+      dayStart,
+      dayEnd,
+      statDateLabel: toDateLabel(anchor)
+    };
+  }
+
+  const [rawYear, rawMonth, rawDay] = rawDate.split("-");
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+  const day = Number(rawDay);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const anchor = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+  if (
+    Number.isNaN(anchor.getTime()) ||
+    anchor.getFullYear() !== year ||
+    anchor.getMonth() !== month - 1 ||
+    anchor.getDate() !== day
+  ) {
+    return null;
+  }
+
+  const dayStart = new Date(anchor);
+  const dayEnd = new Date(anchor);
+
+  dayStart.setHours(0, 0, 0, 0);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  return {
+    statDate: anchor,
+    dayStart,
+    dayEnd,
+    statDateLabel: toDateLabel(anchor)
+  };
 }
 
 function buildActiveWindowFilter(now: Date) {
@@ -1160,6 +1223,143 @@ export async function updateUserIdentityDisplay(
     ok: true,
     message: `已更新 @${user.username} 的公开身份展示。`,
     username: user.username
+  };
+}
+
+export async function syncDailyStatsSnapshot(
+  adminId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = refreshDailyStatsSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查统计日期后再重试。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const resolvedRange = resolveDailyStatDateRange(parsed.data.statDate);
+
+  if (!resolvedRange) {
+    return {
+      ok: false,
+      message: "统计日期格式不正确。"
+    };
+  }
+
+  const snapshot = await prisma.$transaction(async (tx) => {
+    const [newUsers, newPosts, newComments, newReports, activeUsers] = await Promise.all([
+      tx.user.count({
+        where: {
+          createdAt: {
+            gte: resolvedRange.dayStart,
+            lte: resolvedRange.dayEnd
+          }
+        }
+      }),
+      tx.post.count({
+        where: {
+          status: ContentStatus.PUBLISHED,
+          deletedAt: null,
+          createdAt: {
+            gte: resolvedRange.dayStart,
+            lte: resolvedRange.dayEnd
+          }
+        }
+      }),
+      tx.comment.count({
+        where: {
+          status: ContentStatus.PUBLISHED,
+          deletedAt: null,
+          createdAt: {
+            gte: resolvedRange.dayStart,
+            lte: resolvedRange.dayEnd
+          }
+        }
+      }),
+      tx.report.count({
+        where: {
+          createdAt: {
+            gte: resolvedRange.dayStart,
+            lte: resolvedRange.dayEnd
+          }
+        }
+      }),
+      tx.user.count({
+        where: {
+          status: UserStatus.ACTIVE,
+          OR: [
+            {
+              profile: {
+                is: {
+                  lastActiveAt: {
+                    gte: resolvedRange.dayStart,
+                    lte: resolvedRange.dayEnd
+                  }
+                }
+              }
+            },
+            {
+              createdAt: {
+                gte: resolvedRange.dayStart,
+                lte: resolvedRange.dayEnd
+              }
+            }
+          ]
+        }
+      })
+    ]);
+
+    const dailyStat = await tx.dailyStat.upsert({
+      where: {
+        statDate: resolvedRange.statDate
+      },
+      update: {
+        newUsers,
+        newPosts,
+        newComments,
+        newReports,
+        activeUsers
+      },
+      create: {
+        statDate: resolvedRange.statDate,
+        newUsers,
+        newPosts,
+        newComments,
+        newReports,
+        activeUsers
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "sync_daily_stats_snapshot",
+        entityType: "daily_stat",
+        entityId: dailyStat.id,
+        payloadJson: {
+          statDate: resolvedRange.statDateLabel,
+          dayStart: resolvedRange.dayStart.toISOString(),
+          dayEnd: resolvedRange.dayEnd.toISOString(),
+          newUsers,
+          newPosts,
+          newComments,
+          newReports,
+          activeUsers
+        }
+      }
+    });
+
+    return dailyStat;
+  });
+
+  return {
+    ok: true,
+    message: `已同步 ${resolvedRange.statDateLabel} 的 daily_stats 快照。`,
+    statDate: resolvedRange.statDateLabel,
+    id: snapshot.id
   };
 }
 

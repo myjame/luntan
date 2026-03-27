@@ -2,6 +2,10 @@ import "server-only";
 
 import { NotificationType, type Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/prisma";
+import {
+  invalidateRuntimeCacheByPrefix,
+  readThroughRuntimeCache
+} from "@/server/runtime-cache";
 
 type NotificationPayload = {
   title: string;
@@ -13,6 +17,22 @@ type NotificationPayload = {
 };
 
 type NotificationClient = Prisma.TransactionClient;
+
+function notificationCachePrefix(userId: string) {
+  return `notifications:user:${userId}:`;
+}
+
+function notificationListCacheKey(userId: string, take: number) {
+  return `${notificationCachePrefix(userId)}list:${take}`;
+}
+
+function notificationUnreadCountCacheKey(userId: string) {
+  return `${notificationCachePrefix(userId)}unread-count`;
+}
+
+function invalidateNotificationCache(userId: string) {
+  invalidateRuntimeCacheByPrefix(notificationCachePrefix(userId));
+}
 
 function parsePayload(value: Prisma.JsonValue): NotificationPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -78,6 +98,8 @@ export async function markConversationDirectMessageNotificationsRead(
       readAt: new Date()
     }
   });
+
+  invalidateNotificationCache(userId);
 }
 
 export async function createNotification(
@@ -88,13 +110,17 @@ export async function createNotification(
     payload: NotificationPayload;
   }
 ) {
-  return client.notification.create({
+  const created = await client.notification.create({
     data: {
       userId: input.userId,
       type: input.type,
       payloadJson: input.payload
     }
   });
+
+  invalidateNotificationCache(input.userId);
+
+  return created;
 }
 
 export async function createNotifications(
@@ -121,38 +147,51 @@ export async function createNotifications(
 }
 
 export async function listNotifications(userId: string, take = 30) {
-  const notifications = await prisma.notification.findMany({
-    where: {
-      userId
-    },
-    orderBy: [{ createdAt: "desc" }],
-    select: {
-      id: true,
-      type: true,
-      payloadJson: true,
-      isRead: true,
-      readAt: true,
-      createdAt: true
-    },
-    take: Math.max(1, Math.min(take, 50))
-  });
+  const normalizedTake = Math.max(1, Math.min(take, 50));
 
-  return notifications.map((item) => ({
-    id: item.id,
-    type: item.type,
-    isRead: item.isRead,
-    readAt: item.readAt,
-    createdAt: item.createdAt,
-    ...parsePayload(item.payloadJson)
-  }));
+  return readThroughRuntimeCache({
+    key: notificationListCacheKey(userId, normalizedTake),
+    ttlMs: 8_000,
+    loader: async () => {
+      const notifications = await prisma.notification.findMany({
+        where: {
+          userId
+        },
+        orderBy: [{ createdAt: "desc" }],
+        select: {
+          id: true,
+          type: true,
+          payloadJson: true,
+          isRead: true,
+          readAt: true,
+          createdAt: true
+        },
+        take: normalizedTake
+      });
+
+      return notifications.map((item) => ({
+        id: item.id,
+        type: item.type,
+        isRead: item.isRead,
+        readAt: item.readAt,
+        createdAt: item.createdAt,
+        ...parsePayload(item.payloadJson)
+      }));
+    }
+  });
 }
 
 export async function getUnreadNotificationCount(userId: string) {
-  return prisma.notification.count({
-    where: {
-      userId,
-      isRead: false
-    }
+  return readThroughRuntimeCache({
+    key: notificationUnreadCountCacheKey(userId),
+    ttlMs: 8_000,
+    loader: () =>
+      prisma.notification.count({
+        where: {
+          userId,
+          isRead: false
+        }
+      })
   });
 }
 
@@ -192,6 +231,8 @@ export async function markNotificationRead(userId: string, notificationId: strin
     }
   });
 
+  invalidateNotificationCache(userId);
+
   return {
     ok: true,
     message: "通知已标记为已读。"
@@ -218,6 +259,8 @@ export async function markAllNotificationsRead(userId: string) {
       notificationsLastReadAt: new Date()
     }
   });
+
+  invalidateNotificationCache(userId);
 
   return {
     ok: true,
