@@ -129,18 +129,32 @@ export default async function PublicUserPage({
               <ButtonLink href="/me" variant="secondary">
                 回到我的主页
               </ButtonLink>
-            ) : activeUser && profile.relation.canFollow ? (
-              <form action={profile.relation.isFollowing ? unfollowUserAction : followUserAction}>
-                <input name="username" type="hidden" value={profile.user.username} />
-                <input name="returnTo" type="hidden" value={returnTo} />
-                <Button type="submit" variant={profile.relation.isFollowing ? "ghost" : "primary"}>
-                  {profile.relation.isFollowing ? "取消关注" : "关注对方"}
-                </Button>
-              </form>
             ) : (
-              <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}>
-                登录后关注
-              </ButtonLink>
+              <>
+                {activeUser && profile.relation.canFollow ? (
+                  <>
+                    <ButtonLink href={`/me/messages?to=${profile.user.username}`} variant="secondary">
+                      发私信
+                    </ButtonLink>
+                    <form action={profile.relation.isFollowing ? unfollowUserAction : followUserAction}>
+                      <input name="username" type="hidden" value={profile.user.username} />
+                      <input name="returnTo" type="hidden" value={returnTo} />
+                      <Button type="submit" variant={profile.relation.isFollowing ? "ghost" : "primary"}>
+                        {profile.relation.isFollowing ? "取消关注" : "关注对方"}
+                      </Button>
+                    </form>
+                  </>
+                ) : (
+                  <>
+                    <ButtonLink href={`/login?redirectTo=${encodeURIComponent(`/me/messages?to=${profile.user.username}`)}`} variant="secondary">
+                      登录后私信
+                    </ButtonLink>
+                    <ButtonLink href={`/login?redirectTo=${encodeURIComponent(returnTo)}`}>
+                      登录后关注
+                    </ButtonLink>
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>

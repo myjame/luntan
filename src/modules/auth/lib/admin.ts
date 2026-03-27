@@ -2,12 +2,14 @@ import "server-only";
 
 import {
   ModerationActionType,
+  NotificationType,
   ReportStatus,
   ReportTargetType,
   UserRole,
   UserStatus,
   type Prisma
 } from "@/generated/prisma/client";
+import { createNotification } from "@/modules/notifications/lib/service";
 import { prisma } from "@/server/db/prisma";
 
 import type { AuthUserRole, AuthUserStatus } from "@/modules/auth/lib/types";
@@ -501,6 +503,24 @@ export async function reviewUserRegistration(
           reviewedAt: reviewedAt.toISOString(),
           reviewNote: normalizedNote
         }
+      }
+    });
+
+    await createNotification(tx, {
+      userId: user.id,
+      type: NotificationType.REGISTRATION_REVIEW,
+      payload: {
+        title:
+          input.decision === "APPROVE"
+            ? "你的注册申请已通过"
+            : "你的注册申请未通过",
+        body:
+          input.decision === "APPROVE"
+            ? "账号已经转为激活状态，现在可以正常登录和互动。"
+            : normalizedNote
+              ? `审核未通过：${normalizedNote}`
+              : "审核未通过，可以根据提示调整后重新尝试。",
+        href: `/account-status?status=${nextStatus}`
       }
     });
 

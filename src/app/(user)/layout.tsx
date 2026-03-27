@@ -27,6 +27,12 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
             <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/me">
               我的主页
             </Link>
+            <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/me/notifications">
+              我的通知
+            </Link>
+            <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/me/messages">
+              我的私信
+            </Link>
             <Link className="text-sm font-medium text-slate-600 transition hover:text-slate-950" href="/me/posts">
               我的帖子
             </Link>

@@ -181,6 +181,15 @@ a {
   gap: 1.5rem;
 }
 
+.mention-link {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.mention-link:hover {
+  color: #a54c2f;
+}
+
 .post-media-grid {
   display: grid;
   gap: 1rem;

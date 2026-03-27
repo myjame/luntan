@@ -17,7 +17,10 @@ export const profileSchema = z.object({
     .trim()
     .max(160, "简介不能超过 160 个字符")
     .optional()
-    .transform((value) => value || "")
+    .transform((value) => value || ""),
+  directMessagePermission: z
+    .enum(["EVERYONE", "FOLLOWING_ONLY", "DISABLED"])
+    .default("FOLLOWING_ONLY")
 });
 
 export const registerSchema = profileSchema

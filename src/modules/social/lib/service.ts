@@ -3,11 +3,13 @@ import "server-only";
 import {
   CircleStatus,
   ContentStatus,
+  NotificationType,
   ReactionTargetType,
   ReactionType,
   UserStatus,
   type Prisma
 } from "@/generated/prisma/client";
+import { createNotification } from "@/modules/notifications/lib/service";
 import { prisma } from "@/server/db/prisma";
 import {
   listFavoritePostsByUserId,
@@ -189,7 +191,8 @@ export async function togglePostLike(userId: string, postId: string) {
     },
     select: {
       id: true,
-      title: true
+      title: true,
+      authorId: true
     }
   });
 
@@ -260,6 +263,36 @@ export async function togglePostLike(userId: string, postId: string) {
         }
       }
     });
+
+    if (post.authorId !== userId) {
+      const actor = await tx.user.findUnique({
+        where: {
+          id: userId
+        },
+        select: {
+          username: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      });
+
+      if (actor) {
+        await createNotification(tx, {
+          userId: post.authorId,
+          type: NotificationType.LIKE,
+          payload: {
+            title: "你的帖子收到新点赞",
+            body: `${toDisplayName(actor)} 点赞了你的帖子《${post.title}》。`,
+            href: `/posts/${post.id}`,
+            actorUsername: actor.username,
+            actorDisplayName: toDisplayName(actor)
+          }
+        });
+      }
+    }
 
     return {
       ok: true,
@@ -632,6 +665,34 @@ export async function followUser(followerId: string, username: string) {
         followingId: targetUser.id
       }
     });
+
+    const follower = await tx.user.findUnique({
+      where: {
+        id: followerId
+      },
+      select: {
+        username: true,
+        profile: {
+          select: {
+            nickname: true
+          }
+        }
+      }
+    });
+
+    if (follower) {
+      await createNotification(tx, {
+        userId: targetUser.id,
+        type: NotificationType.FOLLOW,
+        payload: {
+          title: "你收到了一位新关注者",
+          body: `${toDisplayName(follower)} 关注了你。`,
+          href: `/users/${follower.username}`,
+          actorUsername: follower.username,
+          actorDisplayName: toDisplayName(follower)
+        }
+      });
+    }
 
     return {
       ok: true,

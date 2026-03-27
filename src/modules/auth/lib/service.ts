@@ -226,6 +226,20 @@ export async function updateCurrentUserProfile(
     }
   });
 
+  await prisma.userSetting.upsert({
+    where: { userId },
+    update: {
+      directMessagePermission:
+        parsed.data.directMessagePermission as DirectMessagePermission
+    },
+    create: {
+      userId,
+      directMessagePermission:
+        parsed.data.directMessagePermission as DirectMessagePermission,
+      homepageLastFeedChannel: HomeFeedChannel.RECOMMENDED
+    }
+  });
+
   return {
     ok: true,
     message: "资料已保存。"

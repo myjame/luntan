@@ -9,11 +9,13 @@ import { initialActionState } from "@/modules/auth/lib/types";
 export function ProfileForm({
   nickname,
   avatarUrl,
-  bio
+  bio,
+  directMessagePermission
 }: {
   nickname: string;
   avatarUrl: string;
   bio: string;
+  directMessagePermission: "EVERYONE" | "FOLLOWING_ONLY" | "DISABLED";
 }) {
   const [state, formAction] = useActionState(updateProfileAction, initialActionState);
 
@@ -56,6 +58,24 @@ export function ProfileForm({
         />
         {state.fieldErrors?.bio ? (
           <p className="mt-2 text-xs text-[var(--color-accent)]">{state.fieldErrors.bio}</p>
+        ) : null}
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-slate-700">私信权限</span>
+        <select
+          className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+          defaultValue={directMessagePermission}
+          name="directMessagePermission"
+        >
+          <option value="EVERYONE">所有人可私信我</option>
+          <option value="FOLLOWING_ONLY">仅我关注的人可私信我</option>
+          <option value="DISABLED">关闭私信</option>
+        </select>
+        {state.fieldErrors?.directMessagePermission ? (
+          <p className="mt-2 text-xs text-[var(--color-accent)]">
+            {state.fieldErrors.directMessagePermission}
+          </p>
         ) : null}
       </label>
 

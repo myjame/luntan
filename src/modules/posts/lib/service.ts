@@ -10,6 +10,7 @@ import {
   CircleStatus,
   ContentStatus,
   HomeFeedChannel,
+  NotificationType,
   PollResultVisibility,
   PostType,
   TagScope,
@@ -30,6 +31,12 @@ import {
   maxAttachmentCount,
   maxAttachmentSizeBytes
 } from "@/modules/posts/lib/constants";
+import {
+  extractMentionUsernames,
+  findMentionedUsers,
+  linkifyMentionsInEscapedText
+} from "@/modules/notifications/lib/mentions";
+import { createNotifications } from "@/modules/notifications/lib/service";
 import { commentEditorSchema, postEditorSchema } from "@/modules/posts/lib/validation";
 
 function validationErrors(error: unknown) {
@@ -338,7 +345,11 @@ function buildContentPayload(content: string, mediaInput = "") {
   const mediaUrls = parseMediaUrls(mediaInput);
   const paragraphs = normalized
     .split(/\n{2,}/)
-    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
+    .map((paragraph) => {
+      const escapedParagraph = escapeHtml(paragraph).replace(/\n/g, "<br />");
+
+      return `<p>${linkifyMentionsInEscapedText(escapedParagraph)}</p>`;
+    })
     .join("");
 
   return {
@@ -1266,6 +1277,7 @@ export async function createComment(
     select: {
       id: true,
       title: true,
+      authorId: true,
       status: true,
       deletedAt: true,
       circle: {
@@ -1318,6 +1330,7 @@ export async function createComment(
     | {
         id: string;
         parentId: string | null;
+        authorId: string;
       }
     | null = null;
 
@@ -1331,7 +1344,8 @@ export async function createComment(
       },
       select: {
         id: true,
-        parentId: true
+        parentId: true,
+        authorId: true
       }
     });
 
@@ -1351,10 +1365,11 @@ export async function createComment(
   }
 
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+  const mentionUsernames = extractMentionUsernames(parsed.data.content);
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    await tx.comment.create({
+    const createdComment = await tx.comment.create({
       data: {
         postId: post.id,
         authorId: actor.id,
@@ -1364,6 +1379,9 @@ export async function createComment(
         contentHtml: contentPayload.contentHtml,
         isAnonymous: parsed.data.isAnonymous,
         status: ContentStatus.PUBLISHED
+      },
+      select: {
+        id: true
       }
     });
 
@@ -1418,6 +1436,59 @@ export async function createComment(
         }
       }
     });
+
+    const notificationInputs: Parameters<typeof createNotifications>[1] = [];
+
+    if (parentComment && parentComment.authorId !== actor.id) {
+      notificationInputs.push({
+        userId: parentComment.authorId,
+        type: NotificationType.REPLY,
+        payload: {
+          title: "你收到了一条回复",
+          body: `${actor.username} 回复了你在《${post.title}》下的评论。`,
+          href: `/posts/${post.id}#comment-${createdComment.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.username
+        }
+      });
+    } else if (!parentComment && post.authorId !== actor.id) {
+      notificationInputs.push({
+        userId: post.authorId,
+        type: NotificationType.COMMENT,
+        payload: {
+          title: "你的帖子收到新评论",
+          body: `${actor.username} 评论了你的帖子《${post.title}》。`,
+          href: `/posts/${post.id}#comment-${createdComment.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.username
+        }
+      });
+    }
+
+    const excludedMentionUserIds = new Set([
+      actor.id,
+      parentComment?.authorId ?? "",
+      !parentComment ? post.authorId : ""
+    ]);
+    const mentionedUsers = (await findMentionedUsers(tx, mentionUsernames)).filter(
+      (user) => !excludedMentionUserIds.has(user.id)
+    );
+
+    notificationInputs.push(
+      ...mentionedUsers.map((user) => ({
+        userId: user.id,
+        type: NotificationType.MENTION,
+        payload: {
+          title: "你在评论中被提到了",
+          body: `${actor.username} 在《${post.title}》的评论里提到了你。`,
+          href: `/posts/${post.id}#comment-${createdComment.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.username
+        }
+      }))
+    );
+
+    await createNotifications(tx, notificationInputs);
   });
 
   return {
@@ -1429,6 +1500,7 @@ export async function createComment(
 export async function updateComment(
   actor: {
     id: string;
+    username: string;
     settings?: { allowAnonymousComments: boolean } | null;
   },
   commentId: string,
@@ -1457,6 +1529,7 @@ export async function updateComment(
       post: {
         select: {
           id: true,
+          title: true,
           circle: {
             select: {
               allowAnonymous: true,
@@ -1496,6 +1569,12 @@ export async function updateComment(
   }
 
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+  const previousMentionUsernames = new Set(
+    extractMentionUsernames(extractContentText(existingComment.contentJson)).map((username) =>
+      username.toLowerCase()
+    )
+  );
+  const newMentionUsernames = extractMentionUsernames(parsed.data.content);
 
   await prisma.$transaction(async (tx) => {
     await tx.commentRevision.create({
@@ -1518,6 +1597,28 @@ export async function updateComment(
         status: ContentStatus.PUBLISHED
       }
     });
+
+    const addedMentionUsernames = newMentionUsernames.filter(
+      (username) => !previousMentionUsernames.has(username.toLowerCase())
+    );
+    const mentionedUsers = (await findMentionedUsers(tx, addedMentionUsernames)).filter(
+      (user) => user.id !== actor.id
+    );
+
+    await createNotifications(
+      tx,
+      mentionedUsers.map((user) => ({
+        userId: user.id,
+        type: NotificationType.MENTION,
+        payload: {
+          title: "你在评论中被提到了",
+          body: `${actor.username} 在《${existingComment.post.title}》的评论里提到了你。`,
+          href: `/posts/${existingComment.post.id}#comment-${existingComment.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.username
+        }
+      }))
+    );
   });
 
   return {
@@ -1843,6 +1944,7 @@ export async function createPost(
   const globalTagNames = parseTagNames(parsed.data.globalTags);
   const circleTagNames = parseTagNames(parsed.data.circleTags);
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+  const mentionUsernames = extractMentionUsernames(parsed.data.content);
   const now = new Date();
   const initialHotScore =
     parsed.data.postType === "ANNOUNCEMENT"
@@ -1931,6 +2033,25 @@ export async function createPost(
         }
       }
     });
+
+    const mentionedUsers = (await findMentionedUsers(tx, mentionUsernames)).filter(
+      (user) => user.id !== actor.id
+    );
+
+    await createNotifications(
+      tx,
+      mentionedUsers.map((user) => ({
+        userId: user.id,
+        type: NotificationType.MENTION,
+        payload: {
+          title: "你在帖子中被提到了",
+          body: `${actor.profile?.nickname ?? actor.username} 在帖子《${parsed.data.title}》里提到了你。`,
+          href: `/posts/${createdPost.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.profile?.nickname ?? actor.username
+        }
+      }))
+    );
 
     return {
       ok: true,
@@ -2094,6 +2215,12 @@ export async function updatePost(
   const globalTagNames = parseTagNames(parsed.data.globalTags);
   const circleTagNames = parseTagNames(parsed.data.circleTags);
   const contentPayload = buildContentPayload(parsed.data.content, parsed.data.mediaUrls);
+  const previousMentionUsernames = new Set(
+    extractMentionUsernames(extractContentText(existingPost.contentJson)).map((username) =>
+      username.toLowerCase()
+    )
+  );
+  const newMentionUsernames = extractMentionUsernames(parsed.data.content);
 
   await prisma.$transaction(async (tx) => {
     await tx.postRevision.create({
@@ -2164,6 +2291,28 @@ export async function updatePost(
         }
       }
     });
+
+    const addedMentionUsernames = newMentionUsernames.filter(
+      (username) => !previousMentionUsernames.has(username.toLowerCase())
+    );
+    const mentionedUsers = (await findMentionedUsers(tx, addedMentionUsernames)).filter(
+      (user) => user.id !== actor.id
+    );
+
+    await createNotifications(
+      tx,
+      mentionedUsers.map((user) => ({
+        userId: user.id,
+        type: NotificationType.MENTION,
+        payload: {
+          title: "你在帖子中被提到了",
+          body: `${actor.username} 在帖子《${parsed.data.title}》里提到了你。`,
+          href: `/posts/${existingPost.id}`,
+          actorUsername: actor.username,
+          actorDisplayName: actor.username
+        }
+      }))
+    );
   });
 
   return {
