@@ -9,6 +9,10 @@ import {
   UserStatus,
   type Prisma
 } from "@/generated/prisma/client";
+import {
+  awardReceiveFavoritePoints,
+  awardReceiveLikePoints
+} from "@/modules/growth/lib/service";
 import { createNotification } from "@/modules/notifications/lib/service";
 import { prisma } from "@/server/db/prisma";
 import {
@@ -270,6 +274,9 @@ export async function togglePostLike(userId: string, postId: string) {
         data: {
           reactionCount: {
             decrement: 1
+          },
+          scoreHot: {
+            decrement: 0.75
           }
         }
       });
@@ -298,8 +305,18 @@ export async function togglePostLike(userId: string, postId: string) {
       data: {
         reactionCount: {
           increment: 1
+        },
+        scoreHot: {
+          increment: 0.75
         }
       }
+    });
+
+    await awardReceiveLikePoints(tx, {
+      userId: post.authorId,
+      actorId: userId,
+      postId: post.id,
+      postTitle: post.title
     });
 
     if (post.authorId !== userId) {
@@ -355,7 +372,8 @@ export async function togglePostFavorite(userId: string, postId: string) {
     },
     select: {
       id: true,
-      title: true
+      title: true,
+      authorId: true
     }
   });
 
@@ -393,6 +411,9 @@ export async function togglePostFavorite(userId: string, postId: string) {
         data: {
           favoriteCount: {
             decrement: 1
+          },
+          scoreHot: {
+            decrement: 1.15
           }
         }
       });
@@ -418,8 +439,18 @@ export async function togglePostFavorite(userId: string, postId: string) {
       data: {
         favoriteCount: {
           increment: 1
+        },
+        scoreHot: {
+          increment: 1.15
         }
       }
+    });
+
+    await awardReceiveFavoritePoints(tx, {
+      userId: post.authorId,
+      actorId: userId,
+      postId: post.id,
+      postTitle: post.title
     });
 
     return {

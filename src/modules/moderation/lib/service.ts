@@ -13,6 +13,10 @@ import {
 } from "@/generated/prisma/client";
 import { createNotification } from "@/modules/notifications/lib/service";
 import {
+  awardCommentCreatePoints,
+  awardPostCreatePoints
+} from "@/modules/growth/lib/service";
+import {
   contentReviewThreshold,
   type UserRestrictionValue
 } from "@/modules/moderation/lib/constants";
@@ -826,6 +830,12 @@ export async function reviewPendingPost(
         }
       });
 
+      await awardPostCreatePoints(tx, {
+        userId: post.authorId,
+        postId: post.id,
+        postTitle: post.title
+      });
+
       const mentionUsernames = extractMentionUsernames(extractContentText(post.contentJson));
       const mentionedUsers = (await findMentionedUsers(tx, mentionUsernames)).filter(
         (user) => user.id !== post.authorId
@@ -1013,6 +1023,13 @@ export async function reviewPendingComment(
         parentId: comment.parentId,
         actor: comment.author,
         commentContentHtml: comment.contentHtml
+      });
+
+      await awardCommentCreatePoints(tx, {
+        userId: comment.authorId,
+        commentId: comment.id,
+        postId: comment.postId,
+        postTitle: comment.post.title
       });
 
       const mentionUsernames = extractMentionUsernames(extractContentText(comment.contentJson));

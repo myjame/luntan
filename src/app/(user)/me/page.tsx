@@ -5,6 +5,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { userQuickLinks } from "@/lib/navigation";
 import { requireActiveUser } from "@/modules/auth/lib/guards";
+import { resolveGrowthLevel } from "@/modules/growth/lib/service";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { UserCommentCard } from "@/modules/social/components/user-comment-card";
 import { UserFollowCard } from "@/modules/social/components/user-follow-card";
@@ -32,11 +33,13 @@ export default async function MePage() {
     return null;
   }
 
+  const level = resolveGrowthLevel(dashboard.user.points);
+
   const stats = [
     { label: "积分", value: dashboard.user.points.toString() },
+    { label: "等级", value: `Lv.${level.level}` },
     { label: "关注", value: dashboard.stats.followingCount.toString() },
-    { label: "粉丝", value: dashboard.stats.followersCount.toString() },
-    { label: "收藏", value: dashboard.stats.favoriteCount.toString() }
+    { label: "粉丝", value: dashboard.stats.followersCount.toString() }
   ];
 
   return (
@@ -85,13 +88,20 @@ export default async function MePage() {
           <div className="mt-6 space-y-2 text-sm leading-7 text-slate-600">
             <p>最近活跃：{formatDate(dashboard.user.lastActiveAt)}</p>
             <p>加入社区：{formatDate(dashboard.user.joinedAt)}</p>
+            <p>
+              当前等级：Lv.{level.level} · 还差 {level.pointsNeeded} 分升级
+            </p>
             <p>已发布帖子：{dashboard.stats.postCount}</p>
             <p>已发布评论：{dashboard.stats.commentCount}</p>
+            <p>已收藏帖子：{dashboard.stats.favoriteCount}</p>
           </div>
 
-          <div className="mt-6">
+          <div className="mt-6 flex flex-wrap gap-3">
             <ButtonLink href={`/users/${dashboard.user.username}`} variant="secondary">
               查看公开主页
+            </ButtonLink>
+            <ButtonLink href="/me/points" variant="ghost">
+              查看积分与等级
             </ButtonLink>
           </div>
         </SurfaceCard>

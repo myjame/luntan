@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
+import { resolveGrowthLevel } from "@/modules/growth/lib/service";
 import { ReportForm } from "@/modules/moderation/components/report-form";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { UserCommentCard } from "@/modules/social/components/user-comment-card";
@@ -112,6 +113,7 @@ export default async function PublicUserPage({
 
   const feedback = getFeedback(query.result, query.message);
   const returnTo = `/users/${profile.user.username}`;
+  const level = resolveGrowthLevel(profile.user.points);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-10 lg:px-10 lg:py-14">
@@ -227,6 +229,7 @@ export default async function PublicUserPage({
             <p className="eyebrow">基础信息</p>
             <div className="mt-5 space-y-3 text-sm leading-7 text-slate-600">
               <p>积分：{profile.user.points}</p>
+              <p>等级：Lv.{level.level}</p>
               <p>关注：{profile.stats.followingCount}</p>
               <p>粉丝：{profile.stats.followersCount}</p>
               <p>公开帖子：{profile.stats.postCount}</p>

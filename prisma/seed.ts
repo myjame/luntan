@@ -224,6 +224,18 @@ async function main() {
     });
   }
 
+  const activePointRules = await prisma.pointRule.findMany({
+    where: {
+      isActive: true
+    },
+    select: {
+      id: true,
+      eventType: true,
+      name: true,
+      points: true
+    }
+  });
+
   const badges = [
     {
       name: "深夜影评人",
@@ -243,13 +255,77 @@ async function main() {
     }
   ];
 
+  const createdBadges = [];
+
   for (const item of badges) {
-    await prisma.badge.upsert({
+    const badge = await prisma.badge.upsert({
       where: { name: item.name },
       update: item,
       create: item
     });
+
+    createdBadges.push(badge);
   }
+
+  const featuredBadge = createdBadges.find((item) => item.kind === BadgeKind.BADGE) ?? null;
+  const titleBadge = createdBadges.find((item) => item.kind === BadgeKind.TITLE) ?? null;
+
+  if (featuredBadge) {
+    const existing = await prisma.userBadge.findFirst({
+      where: {
+        userId: admin.id,
+        badgeId: featuredBadge.id
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (!existing) {
+      await prisma.userBadge.create({
+        data: {
+          userId: admin.id,
+          badgeId: featuredBadge.id,
+          grantedById: admin.id,
+          reason: "种子数据初始化授予"
+        }
+      });
+    }
+  }
+
+  if (titleBadge) {
+    const existing = await prisma.userBadge.findFirst({
+      where: {
+        userId: admin.id,
+        badgeId: titleBadge.id
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (!existing) {
+      await prisma.userBadge.create({
+        data: {
+          userId: admin.id,
+          badgeId: titleBadge.id,
+          grantedById: admin.id,
+          reason: "种子数据初始化授予"
+        }
+      });
+    }
+  }
+
+  await prisma.userProfile.update({
+    where: {
+      userId: admin.id
+    },
+    data: {
+      featuredBadgeId: featuredBadge?.id ?? null,
+      titleBadgeId: titleBadge?.id ?? null,
+      lastActiveAt: new Date()
+    }
+  });
 
   const banners = [
     {
@@ -406,6 +482,97 @@ async function main() {
       create: {
         statDate: createStatDate(index),
         ...item
+      }
+    });
+  }
+
+  const seedLedgers = [
+    {
+      eventType: PointEventType.POST_CREATE,
+      referenceType: "seed_post",
+      referenceId: "seed-post-1",
+      note: "发布演示帖子"
+    },
+    {
+      eventType: PointEventType.POST_CREATE,
+      referenceType: "seed_post",
+      referenceId: "seed-post-2",
+      note: "发布演示帖子"
+    },
+    {
+      eventType: PointEventType.COMMENT_CREATE,
+      referenceType: "seed_comment",
+      referenceId: "seed-comment-1",
+      note: "发布演示评论"
+    },
+    {
+      eventType: PointEventType.RECEIVE_LIKE,
+      referenceType: "seed_post_like",
+      referenceId: "seed-like-1",
+      note: "帖子收到点赞"
+    },
+    {
+      eventType: PointEventType.RECEIVE_FAVORITE,
+      referenceType: "seed_post_favorite",
+      referenceId: "seed-favorite-1",
+      note: "帖子被收藏"
+    }
+  ];
+
+  for (const item of seedLedgers) {
+    const rule = activePointRules.find((candidate) => candidate.eventType === item.eventType);
+
+    if (!rule) {
+      continue;
+    }
+
+    const existing = await prisma.pointLedger.findFirst({
+      where: {
+        userId: admin.id,
+        ruleId: rule.id,
+        referenceType: item.referenceType,
+        referenceId: item.referenceId
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (existing) {
+      continue;
+    }
+
+    const currentBalance = (
+      await prisma.userProfile.findUnique({
+        where: {
+          userId: admin.id
+        },
+        select: {
+          points: true
+        }
+      })
+    )?.points ?? 0;
+
+    await prisma.pointLedger.create({
+      data: {
+        userId: admin.id,
+        ruleId: rule.id,
+        operatorId: admin.id,
+        eventType: item.eventType,
+        delta: rule.points,
+        balanceAfter: currentBalance + rule.points,
+        referenceType: item.referenceType,
+        referenceId: item.referenceId,
+        note: item.note
+      }
+    });
+
+    await prisma.userProfile.update({
+      where: {
+        userId: admin.id
+      },
+      data: {
+        points: currentBalance + rule.points
       }
     });
   }

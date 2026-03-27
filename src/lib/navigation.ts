@@ -2,6 +2,7 @@ export const siteNavigation: Array<{ href: string; label: string }> = [
   { href: "/", label: "首页" },
   { href: "/square", label: "广场" },
   { href: "/discover", label: "发现" },
+  { href: "/search", label: "搜索" },
   { href: "/circles", label: "圈子" }
 ];
 
@@ -9,6 +10,7 @@ export const userQuickLinks: Array<{ href: string; label: string; description: s
   { href: "/me", label: "我的主页", description: "身份展示、关注关系和最近活跃。" },
   { href: "/me/notifications", label: "我的通知", description: "查看点赞、评论、回复、关注和私信提醒。" },
   { href: "/me/messages", label: "我的私信", description: "查看会话列表并继续发送站内私信。" },
+  { href: "/me/points", label: "我的积分", description: "查看等级进度、勋章头衔和最近积分流水。" },
   { href: "/me/posts", label: "我的帖子", description: "查看自己发布的帖子和内容沉淀。" },
   { href: "/me/comments", label: "我的评论", description: "回看自己的评论、回复和互动痕迹。" },
   { href: "/me/favorites", label: "我的收藏", description: "集中查看收藏过的帖子内容。" },

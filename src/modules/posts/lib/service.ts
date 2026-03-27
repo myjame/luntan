@@ -17,6 +17,10 @@ import {
   type Prisma,
   type UserRole
 } from "@/generated/prisma/client";
+import {
+  awardCommentCreatePoints,
+  awardPostCreatePoints
+} from "@/modules/growth/lib/service";
 import { prisma } from "@/server/db/prisma";
 import { appConfig } from "@/server/config/app-config";
 
@@ -961,18 +965,39 @@ export async function listHomeFeedPosts(input: {
       circle: {
         is: {
           status: CircleStatus.ACTIVE,
-          deletedAt: null,
-          ...(input.channel === "FOLLOWING" && input.userId
-            ? {
-                follows: {
-                  some: {
-                    userId: input.userId
+          deletedAt: null
+        }
+      },
+      ...(input.channel === "FOLLOWING" && input.userId
+        ? {
+            OR: [
+              {
+                circle: {
+                  is: {
+                    status: CircleStatus.ACTIVE,
+                    deletedAt: null,
+                    follows: {
+                      some: {
+                        userId: input.userId
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                author: {
+                  is: {
+                    followers: {
+                      some: {
+                        followerId: input.userId
+                      }
+                    }
                   }
                 }
               }
-            : {})
-        }
-      }
+            ]
+          }
+        : {})
     },
     select: postFeedSelect,
     orderBy: buildFeedOrderBy(input.channel),
@@ -1213,6 +1238,20 @@ export async function getPublicPostDetail(
     return null;
   }
 
+  await prisma.post.update({
+    where: {
+      id: post.id
+    },
+    data: {
+      viewCount: {
+        increment: 1
+      },
+      scoreHot: {
+        increment: 0.08
+      }
+    }
+  });
+
   const selectedOptionIds = currentUserVotes.map((item) => item.optionId);
   const hasVoted = selectedOptionIds.length > 0;
   const isPollExpired = post.poll?.expiresAt
@@ -1226,7 +1265,10 @@ export async function getPublicPostDetail(
   );
 
   return {
-    post,
+    post: {
+      ...post,
+      viewCount: post.viewCount + 1
+    },
     canEdit: Boolean(currentUserId && currentUserId === post.author.id),
     canRevealAuthor: currentUserRole === "SUPER_ADMIN",
     pollState: post.poll
@@ -1430,6 +1472,13 @@ export async function createComment(
             increment: 0.4
           }
         }
+      });
+
+      await awardCommentCreatePoints(tx, {
+        userId: actor.id,
+        commentId: createdComment.id,
+        postId: post.id,
+        postTitle: post.title
       });
 
       if (parentComment) {
@@ -2157,6 +2206,12 @@ export async function createPost(
             increment: 1
           }
         }
+      });
+
+      await awardPostCreatePoints(tx, {
+        userId: actor.id,
+        postId: createdPost.id,
+        postTitle: parsed.data.title
       });
     }
 
