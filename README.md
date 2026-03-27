@@ -12,6 +12,10 @@
 - [项目架构说明](./docs/project-architecture.md)
 - [数据模型基础说明](./docs/data-model-foundation.md)
 - [前端视觉与交互方向](./docs/frontend-direction.md)
+- [公开页渲染与缓存策略](./docs/rendering-strategy.md)
+- [本地开发说明](./docs/local-development.md)
+- [部署说明](./docs/deployment.md)
+- [上传目录备份与清理策略](./docs/upload-backup-cleanup.md)
 
 ## 当前状态
 
@@ -19,8 +23,9 @@
 - 已完成开发步骤与任务拆解
 - 已完成一体化 `Next.js` 项目骨架落地
 - 已完成 Prisma 核心数据模型、初始迁移与种子脚本
-- 已完成注册、登录、Session、权限拦截、账号设置与注销申请基础链路
-- 下一步建议进入后台审核入口与用户审核流
+- 已完成注册登录、圈子、帖子、评论、私信、通知、治理后台主链路
+- 已完成搜索、热度、积分、勋章与 `daily_stats` 轻量统计能力
+- 已完成公开页 SEO、渲染策略、基础测试与部署文档补齐
 
 ## 当前工程结构
 
@@ -52,7 +57,10 @@ docs/              产品、任务与设计文档
 当前目录已经补齐启动所需配置文件，后续在有可用 Node 环境的机器上执行：
 
 ```bash
+cp .env.example .env
 npm install
+npm run db:migrate:deploy
+npm run db:seed
 npm run dev
 ```
 
@@ -60,4 +68,10 @@ npm run dev
 
 ```bash
 docker compose up --build
+```
+
+生产部署建议使用：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
 ```

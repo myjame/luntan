@@ -1,5 +1,7 @@
 import { LoginForm } from "@/modules/auth/components/login-form";
 
+export const dynamic = "force-dynamic";
+
 export default async function LoginPage({
   searchParams
 }: {

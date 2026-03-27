@@ -25,6 +25,7 @@ tsconfig.tsbuildinfo
 
 # uploads
 uploads/
+backups/
 
 # os / editor
 .DS_Store

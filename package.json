@@ -11,6 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --import tsx --test tests/**/*.test.ts",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
@@ -20,7 +21,9 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "uploads:backup": "node scripts/uploads-maintenance.mjs backup",
+    "uploads:cleanup": "node scripts/uploads-maintenance.mjs cleanup --days=30"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.5.0",

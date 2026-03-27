@@ -46,7 +46,7 @@ export async function requireSuperAdmin() {
   const user = await requireActiveUser();
 
   if (user.role !== "SUPER_ADMIN") {
-    redirect("/account-status?status=ACTIVE" as Route);
+    redirect("/forbidden?reason=admin-only" as Route);
   }
 
   return user;
