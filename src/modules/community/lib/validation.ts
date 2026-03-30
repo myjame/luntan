@@ -59,6 +59,43 @@ export const circleManagerSchema = z.object({
   username: z.string().trim().min(1, "请输入要添加的用户名")
 });
 
+export const circlePostPinSchema = z.object({
+  postId: z.string().trim().min(1, "缺少帖子标识")
+});
+
+export const circleMuteSchema = z.object({
+  username: z.string().trim().min(1, "请输入要禁言的用户名"),
+  durationDays: z.enum(["1", "3", "7"]),
+  reason: z
+    .string()
+    .trim()
+    .max(240, "禁言原因不能超过 240 个字符")
+    .optional()
+    .transform((value) => value || "")
+});
+
+export const circleMuteReleaseSchema = z.object({
+  muteId: z.string().trim().min(1, "缺少禁言记录标识")
+});
+
+export const circleReportResolutionSchema = z.object({
+  reportId: z.string().trim().min(1, "缺少举报标识"),
+  action: z.enum([
+    "RESOLVE_ONLY",
+    "REJECT_REPORT",
+    "DELETE_POST",
+    "DELETE_COMMENT",
+    "MUTE_3_DAYS",
+    "MUTE_7_DAYS"
+  ]),
+  resolutionNote: z
+    .string()
+    .trim()
+    .max(240, "处理说明不能超过 240 个字符")
+    .optional()
+    .transform((value) => value || "")
+});
+
 export const circleReviewSchema = z.object({
   applicationId: z.string().trim().min(1, "缺少圈子申请标识"),
   decision: z.enum(["APPROVE", "REJECT"]),

@@ -6,6 +6,7 @@ import {
   ContentStatus,
   ModerationActionType,
   NotificationType,
+  ReportStatus,
   ReportTargetType,
   UserStatus,
   WorkflowStatus,
@@ -15,7 +16,15 @@ import {
 import { createNotification } from "@/modules/notifications/lib/service";
 import { prisma } from "@/server/db/prisma";
 
-import { circleApplicationSchema, circleManagerSchema, circleProfileSchema } from "@/modules/community/lib/validation";
+import {
+  circleApplicationSchema,
+  circleManagerSchema,
+  circleMuteReleaseSchema,
+  circleMuteSchema,
+  circlePostPinSchema,
+  circleProfileSchema,
+  circleReportResolutionSchema
+} from "@/modules/community/lib/validation";
 
 function validationErrors(error: unknown) {
   if (!(error instanceof Error) || !("issues" in error)) {
@@ -398,6 +407,21 @@ function getActorDisplayName(user: {
   profile?: { nickname: string | null } | null;
 }) {
   return user.profile?.nickname ?? user.username;
+}
+
+type CircleGovernanceActor = {
+  id: string;
+  username: string;
+  role: UserRole;
+  profile?: { nickname: string | null } | null;
+};
+
+function getCircleMuteExpiresAt(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+}
+
+function getCircleMuteDurationLabel(days: number) {
+  return `${days} 天`;
 }
 
 async function getCircleAccessContext(input: {
@@ -1572,4 +1596,1282 @@ export async function deleteCirclePostByManager(
     ok: true,
     message: `已删除帖子《${post.title}》。`
   } as const;
+}
+
+const activeCircleMuteSelect = {
+  id: true,
+  reason: true,
+  expiresAt: true,
+  circle: {
+    select: {
+      id: true,
+      name: true,
+      slug: true
+    }
+  }
+} as const;
+
+type ActiveCircleMuteRecord = {
+  id: string;
+  reason: string | null;
+  expiresAt: Date;
+  circle: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+};
+
+type CircleMuteManagementItem = {
+  id: string;
+  reason: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+  user: {
+    id: string;
+    username: string;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+  createdBy: {
+    username: string;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+};
+
+type CircleMuteReleaseItem = {
+  id: string;
+  userId: string;
+  user: {
+    username: string;
+    role: UserRole;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+};
+
+type CircleGovernanceTarget = {
+  label: string;
+  href: string;
+  ownerUserId: string | null;
+  circleId: string;
+  circleName: string;
+  circleSlug: string;
+  targetType: ReportTargetType;
+  postId?: string;
+  commentId?: string;
+};
+
+function getCircleMuteDelegate(client: Prisma.TransactionClient | typeof prisma) {
+  return (client as {
+    circleMute: {
+      findFirst: (args: unknown) => Promise<unknown>;
+      findMany: (args: unknown) => Promise<unknown[]>;
+      update: (args: unknown) => Promise<unknown>;
+      upsert: (args: unknown) => Promise<unknown>;
+    };
+  }).circleMute;
+}
+
+async function resolveCircleGovernanceTarget(
+  client: Prisma.TransactionClient | typeof prisma,
+  input: {
+    targetType: ReportTargetType;
+    targetId: string;
+  }
+) {
+  if (input.targetType === ReportTargetType.POST) {
+    const post = await client.post.findUnique({
+      where: {
+        id: input.targetId
+      },
+      select: {
+        id: true,
+        title: true,
+        authorId: true,
+        deletedAt: true,
+        circle: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        }
+      }
+    });
+
+    if (!post || post.deletedAt) {
+      return null;
+    }
+
+    return {
+      label: `帖子《${post.title}》`,
+      href: `/posts/${post.id}`,
+      ownerUserId: post.authorId,
+      circleId: post.circle.id,
+      circleName: post.circle.name,
+      circleSlug: post.circle.slug,
+      targetType: ReportTargetType.POST,
+      postId: post.id
+    } satisfies CircleGovernanceTarget;
+  }
+
+  if (input.targetType === ReportTargetType.COMMENT) {
+    const comment = await client.comment.findUnique({
+      where: {
+        id: input.targetId
+      },
+      select: {
+        id: true,
+        postId: true,
+        authorId: true,
+        deletedAt: true,
+        post: {
+          select: {
+            title: true,
+            circle: {
+              select: {
+                id: true,
+                name: true,
+                slug: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!comment || comment.deletedAt) {
+      return null;
+    }
+
+    return {
+      label: `评论（《${comment.post.title}》）`,
+      href: `/posts/${comment.postId}#comment-${comment.id}`,
+      ownerUserId: comment.authorId,
+      circleId: comment.post.circle.id,
+      circleName: comment.post.circle.name,
+      circleSlug: comment.post.circle.slug,
+      targetType: ReportTargetType.COMMENT,
+      postId: comment.postId,
+      commentId: comment.id
+    } satisfies CircleGovernanceTarget;
+  }
+
+  if (input.targetType !== ReportTargetType.CIRCLE) {
+    return null;
+  }
+
+  const circle = await client.circle.findUnique({
+    where: {
+      id: input.targetId
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      ownerId: true,
+      deletedAt: true
+    }
+  });
+
+  if (!circle || circle.deletedAt) {
+    return null;
+  }
+
+  return {
+    label: `圈子 ${circle.name}`,
+    href: `/circles/${circle.slug}`,
+    ownerUserId: circle.ownerId,
+    circleId: circle.id,
+    circleName: circle.name,
+    circleSlug: circle.slug,
+    targetType: ReportTargetType.CIRCLE
+  } satisfies CircleGovernanceTarget;
+}
+
+function getCircleTargetRestrictionMessage(input: {
+  accessContext: NonNullable<Awaited<ReturnType<typeof getCircleAccessContext>>>;
+  actor: CircleGovernanceActor;
+  targetUser: {
+    id: string;
+    username: string;
+    role: UserRole;
+  };
+}) {
+  if (input.targetUser.id === input.actor.id) {
+    return "不能对自己执行圈内治理动作。";
+  }
+
+  if (input.targetUser.role === "SUPER_ADMIN") {
+    return "超级管理员不能被圈内治理动作限制。";
+  }
+
+  if (input.targetUser.id === input.accessContext.circle.ownerId && input.actor.role !== "SUPER_ADMIN") {
+    return "圈主不能被普通圈内治理动作限制。";
+  }
+
+  const targetRelation =
+    input.accessContext.circle.managers.find((item) => item.userId === input.targetUser.id) ?? null;
+
+  if (
+    targetRelation?.role === CircleManagerRole.MANAGER &&
+    !input.accessContext.canManageManagers &&
+    input.actor.role !== "SUPER_ADMIN"
+  ) {
+    return "只有圈主或超级管理员可以治理圈管账号。";
+  }
+
+  return null;
+}
+
+async function deleteCircleCommentByManagerInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    actor: CircleGovernanceActor;
+    commentId: string;
+    reason: string | null;
+    circleId: string;
+    circleName: string;
+    circleSlug: string;
+  }
+) {
+  const comment = await tx.comment.findUnique({
+    where: {
+      id: input.commentId
+    },
+    select: {
+      id: true,
+      postId: true,
+      parentId: true,
+      status: true,
+      deletedAt: true,
+      authorId: true,
+      post: {
+        select: {
+          title: true,
+          circleId: true
+        }
+      }
+    }
+  });
+
+  if (!comment || comment.deletedAt || comment.post.circleId !== input.circleId) {
+    return null;
+  }
+
+  if (comment.status !== ContentStatus.DELETED) {
+    const descendantReplies = comment.parentId
+      ? []
+      : await tx.comment.findMany({
+          where: {
+            rootId: comment.id,
+            deletedAt: null
+          },
+          select: {
+            id: true,
+            status: true
+          }
+        });
+    const targetIds = [comment.id, ...descendantReplies.map((item) => item.id)];
+
+    await tx.comment.updateMany({
+      where: {
+        id: {
+          in: targetIds
+        }
+      },
+      data: {
+        status: ContentStatus.DELETED,
+        deletedAt: new Date()
+      }
+    });
+
+    if (comment.status === ContentStatus.PUBLISHED) {
+      const publishedReplyCount = descendantReplies.filter(
+        (item) => item.status === ContentStatus.PUBLISHED
+      ).length;
+
+      await tx.post.update({
+        where: {
+          id: comment.postId
+        },
+        data: {
+          commentCount: {
+            decrement: 1 + publishedReplyCount
+          }
+        }
+      });
+
+      if (comment.parentId) {
+        await tx.comment.update({
+          where: {
+            id: comment.parentId
+          },
+          data: {
+            replyCount: {
+              decrement: 1
+            }
+          }
+        });
+      }
+    }
+  }
+
+  await tx.moderationAction.create({
+    data: {
+      actorId: input.actor.id,
+      targetUserId: comment.authorId,
+      actionType: ModerationActionType.DELETE_COMMENT,
+      targetType: ReportTargetType.COMMENT,
+      targetId: comment.id,
+      reason: input.reason,
+      metadataJson: {
+        scope: "circle",
+        circleId: input.circleId,
+        circleName: input.circleName,
+        circleSlug: input.circleSlug,
+        postId: comment.postId,
+        postTitle: comment.post.title
+      }
+    }
+  });
+
+  await tx.auditLog.create({
+    data: {
+      actorId: input.actor.id,
+      action: "delete_comment_by_circle_manager",
+      entityType: "comment",
+      entityId: comment.id,
+      payloadJson: {
+        circleId: input.circleId,
+        circleName: input.circleName,
+        circleSlug: input.circleSlug,
+        postId: comment.postId,
+        postTitle: comment.post.title,
+        reason: input.reason
+      }
+    }
+  });
+
+  if (comment.authorId !== input.actor.id) {
+    await createNotification(tx, {
+      userId: comment.authorId,
+      type: NotificationType.SYSTEM,
+      payload: {
+        title: "你的评论已被圈内管理员移除",
+        body: input.reason
+          ? `你在《${comment.post.title}》下的评论已被移除，原因：${input.reason}`
+          : `你在《${comment.post.title}》下的评论已被圈内管理员移除。`,
+        href: `/posts/${comment.postId}#comments`
+      }
+    });
+  }
+
+  return comment;
+}
+
+async function applyCircleMuteInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    actor: CircleGovernanceActor;
+    targetUser: {
+      id: string;
+      username: string;
+      profile?: { nickname: string | null } | null;
+    };
+    circle: {
+      id: string;
+      name: string;
+      slug: string;
+    };
+    days: number;
+    reason: string | null;
+  }
+) {
+  const expiresAt = getCircleMuteExpiresAt(input.days);
+
+  const mute = (await getCircleMuteDelegate(tx).upsert({
+    where: {
+      circleId_userId: {
+        circleId: input.circle.id,
+        userId: input.targetUser.id
+      }
+    },
+    create: {
+      circleId: input.circle.id,
+      userId: input.targetUser.id,
+      createdById: input.actor.id,
+      reason: input.reason,
+      expiresAt
+    },
+    update: {
+      createdById: input.actor.id,
+      revokedAt: null,
+      revokedById: null,
+      reason: input.reason,
+      expiresAt
+    },
+    select: {
+      id: true,
+      expiresAt: true
+    }
+  })) as { id: string; expiresAt: Date };
+
+  await tx.moderationAction.create({
+    data: {
+      actorId: input.actor.id,
+      targetUserId: input.targetUser.id,
+      actionType: ModerationActionType.MUTE_USER,
+      reason: input.reason,
+      metadataJson: {
+        scope: "circle",
+        circleId: input.circle.id,
+        circleName: input.circle.name,
+        circleSlug: input.circle.slug,
+        days: input.days,
+        expiresAt: mute.expiresAt.toISOString()
+      }
+    }
+  });
+
+  await tx.auditLog.create({
+    data: {
+      actorId: input.actor.id,
+      action: "mute_user_in_circle",
+      entityType: "user",
+      entityId: input.targetUser.id,
+      payloadJson: {
+        circleId: input.circle.id,
+        circleName: input.circle.name,
+        circleSlug: input.circle.slug,
+        targetUsername: input.targetUser.username,
+        durationDays: input.days,
+        expiresAt: mute.expiresAt.toISOString(),
+        reason: input.reason
+      }
+    }
+  });
+
+  if (input.targetUser.id !== input.actor.id) {
+    await createNotification(tx, {
+      userId: input.targetUser.id,
+      type: NotificationType.SYSTEM,
+      payload: {
+        title: "你在圈子内被禁言了",
+        body: input.reason
+          ? `你在圈子「${input.circle.name}」内被禁言 ${getCircleMuteDurationLabel(input.days)}，原因：${input.reason}`
+          : `你在圈子「${input.circle.name}」内被禁言 ${getCircleMuteDurationLabel(input.days)}。`,
+        href: `/circles/${input.circle.slug}`
+      }
+    });
+  }
+
+  return mute;
+}
+
+export async function getActiveCircleMute(input: {
+  circleId: string;
+  userId: string;
+}): Promise<ActiveCircleMuteRecord | null> {
+  return (await getCircleMuteDelegate(prisma).findFirst({
+    where: {
+      circleId: input.circleId,
+      userId: input.userId,
+      revokedAt: null,
+      expiresAt: {
+        gt: new Date()
+      }
+    },
+    select: activeCircleMuteSelect
+  })) as ActiveCircleMuteRecord | null;
+}
+
+export async function listCircleMutesForManagement(input: {
+  circleId: string;
+  actorId: string;
+  actorRole: UserRole;
+}): Promise<CircleMuteManagementItem[]> {
+  const accessContext = await getCircleAccessContext(input);
+
+  if (!accessContext?.canManage) {
+    return [];
+  }
+
+  return (await getCircleMuteDelegate(prisma).findMany({
+    where: {
+      circleId: accessContext.circle.id,
+      revokedAt: null,
+      expiresAt: {
+        gt: new Date()
+      }
+    },
+    orderBy: [{ expiresAt: "asc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      reason: true,
+      expiresAt: true,
+      createdAt: true,
+      user: {
+        select: {
+          id: true,
+          username: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      },
+      createdBy: {
+        select: {
+          username: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      }
+    }
+  })) as CircleMuteManagementItem[];
+}
+
+export async function toggleCirclePostPin(
+  actor: CircleGovernanceActor,
+  circleId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = circlePostPinSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "缺少要处理的帖子。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const accessContext = await getCircleAccessContext({
+    circleId,
+    actorId: actor.id,
+    actorRole: actor.role
+  });
+
+  if (!accessContext?.canManage) {
+    return {
+      ok: false,
+      message: "你当前没有处理这个圈子帖子的权限。"
+    } as const;
+  }
+
+  const post = await prisma.post.findFirst({
+    where: {
+      id: parsed.data.postId,
+      circleId: accessContext.circle.id,
+      deletedAt: null,
+      status: ContentStatus.PUBLISHED
+    },
+    select: {
+      id: true,
+      title: true,
+      isPinned: true,
+      authorId: true
+    }
+  });
+
+  if (!post) {
+    return {
+      ok: false,
+      message: "未找到可置顶的帖子。"
+    } as const;
+  }
+
+  const nextValue = !post.isPinned;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.post.update({
+      where: {
+        id: post.id
+      },
+      data: {
+        isPinned: nextValue
+      }
+    });
+
+    await tx.moderationAction.create({
+      data: {
+        actorId: actor.id,
+        targetUserId: post.authorId,
+        actionType: ModerationActionType.PIN_POST,
+        targetType: ReportTargetType.POST,
+        targetId: post.id,
+        metadataJson: {
+          scope: "circle",
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug,
+          title: post.title,
+          enabled: nextValue
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: nextValue ? "pin_post_by_circle_manager" : "unpin_post_by_circle_manager",
+        entityType: "post",
+        entityId: post.id,
+        payloadJson: {
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug,
+          title: post.title,
+          enabled: nextValue
+        }
+      }
+    });
+
+    if (post.authorId !== actor.id) {
+      await createNotification(tx, {
+        userId: post.authorId,
+        type: NotificationType.SYSTEM,
+        payload: {
+          title: nextValue ? "你的帖子已被圈内置顶" : "你的帖子已取消圈内置顶",
+          body: nextValue
+            ? `帖子《${post.title}》已被圈内管理员置顶展示。`
+            : `帖子《${post.title}》已取消圈内置顶。`,
+          href: `/posts/${post.id}`
+        }
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    message: nextValue ? `已置顶帖子《${post.title}》。` : `已取消置顶帖子《${post.title}》。`
+  } as const;
+}
+
+export async function muteCircleUser(
+  actor: CircleGovernanceActor,
+  circleId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = circleMuteSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查禁言信息后再提交。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const accessContext = await getCircleAccessContext({
+    circleId,
+    actorId: actor.id,
+    actorRole: actor.role
+  });
+
+  if (!accessContext?.canManage) {
+    return {
+      ok: false,
+      message: "你当前没有处理这个圈子的权限。"
+    } as const;
+  }
+
+  const targetUser = await prisma.user.findFirst({
+    where: {
+      username: parsed.data.username,
+      status: {
+        in: [UserStatus.ACTIVE, UserStatus.MUTED]
+      }
+    },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      profile: {
+        select: {
+          nickname: true
+        }
+      }
+    }
+  });
+
+  if (!targetUser) {
+    return {
+      ok: false,
+      message: "未找到可禁言的有效用户。"
+    } as const;
+  }
+
+  const restrictionMessage = getCircleTargetRestrictionMessage({
+    accessContext,
+    actor,
+    targetUser
+  });
+
+  if (restrictionMessage) {
+    return {
+      ok: false,
+      message: restrictionMessage
+    } as const;
+  }
+
+  const days = Number(parsed.data.durationDays);
+  const normalizedReason = parsed.data.reason || null;
+
+  await prisma.$transaction(async (tx) => {
+    await applyCircleMuteInTransaction(tx, {
+      actor,
+      targetUser,
+      circle: {
+        id: accessContext.circle.id,
+        name: accessContext.circle.name,
+        slug: accessContext.circle.slug
+      },
+      days,
+      reason: normalizedReason
+    });
+  });
+
+  return {
+    ok: true,
+    message: `已将 ${getActorDisplayName(targetUser)} 在圈内禁言 ${getCircleMuteDurationLabel(days)}。`
+  } as const;
+}
+
+export async function unmuteCircleUser(
+  actor: CircleGovernanceActor,
+  circleId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = circleMuteReleaseSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "缺少禁言记录标识。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const accessContext = await getCircleAccessContext({
+    circleId,
+    actorId: actor.id,
+    actorRole: actor.role
+  });
+
+  if (!accessContext?.canManage) {
+    return {
+      ok: false,
+      message: "你当前没有处理这个圈子的权限。"
+    } as const;
+  }
+
+  const muteRecord = (await getCircleMuteDelegate(prisma).findFirst({
+    where: {
+      id: parsed.data.muteId,
+      circleId: accessContext.circle.id,
+      revokedAt: null,
+      expiresAt: {
+        gt: new Date()
+      }
+    },
+    select: {
+      id: true,
+      userId: true,
+      user: {
+        select: {
+          username: true,
+          role: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      }
+    }
+  })) as CircleMuteReleaseItem | null;
+
+  if (!muteRecord) {
+    return {
+      ok: false,
+      message: "未找到仍在生效中的圈内禁言记录。"
+    } as const;
+  }
+
+  const restrictionMessage = getCircleTargetRestrictionMessage({
+    accessContext,
+    actor,
+    targetUser: {
+      id: muteRecord.userId,
+      username: muteRecord.user.username,
+      role: muteRecord.user.role
+    }
+  });
+
+  if (restrictionMessage) {
+    return {
+      ok: false,
+      message: restrictionMessage
+    } as const;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await getCircleMuteDelegate(tx).update({
+      where: {
+        id: muteRecord.id
+      },
+      data: {
+        revokedAt: new Date(),
+        revokedById: actor.id
+      }
+    });
+
+    await tx.moderationAction.create({
+      data: {
+        actorId: actor.id,
+        targetUserId: muteRecord.userId,
+        actionType: ModerationActionType.UNMUTE_USER,
+        metadataJson: {
+          scope: "circle",
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "unmute_user_in_circle",
+        entityType: "user",
+        entityId: muteRecord.userId,
+        payloadJson: {
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug,
+          targetUsername: muteRecord.user.username
+        }
+      }
+    });
+
+    await createNotification(tx, {
+      userId: muteRecord.userId,
+      type: NotificationType.SYSTEM,
+      payload: {
+        title: "你在圈子内的禁言已解除",
+        body: `你在圈子「${accessContext.circle.name}」内的禁言已被解除。`,
+        href: `/circles/${accessContext.circle.slug}`
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    message: `已解除 ${getActorDisplayName(muteRecord.user)} 的圈内禁言。`
+  } as const;
+}
+
+export async function listCircleReportsForManagement(input: {
+  circleId: string;
+  actorId: string;
+  actorRole: UserRole;
+  take?: number;
+}) {
+  const accessContext = await getCircleAccessContext(input);
+
+  if (!accessContext?.canManage) {
+    return [];
+  }
+
+  const normalizedTake = Math.max(1, Math.min(input.take ?? 8, 20));
+  const reports = await prisma.report.findMany({
+    where: {
+      status: ReportStatus.PENDING,
+      targetType: {
+        in: [ReportTargetType.POST, ReportTargetType.COMMENT, ReportTargetType.CIRCLE]
+      }
+    },
+    orderBy: [{ createdAt: "desc" }],
+    select: {
+      id: true,
+      targetType: true,
+      targetId: true,
+      reportType: true,
+      detail: true,
+      status: true,
+      createdAt: true,
+      reporter: {
+        select: {
+          username: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      }
+    },
+    take: Math.max(normalizedTake * 6, 48)
+  });
+
+  const scopedReports = await Promise.all(
+    reports.map(async (report) => {
+      const target = await resolveCircleGovernanceTarget(prisma, {
+        targetType: report.targetType,
+        targetId: report.targetId
+      });
+
+      if (!target || target.circleId !== accessContext.circle.id) {
+        return null;
+      }
+
+      return {
+        ...report,
+        targetLabel: target.label,
+        targetHref: target.href,
+        circleSlug: target.circleSlug
+      };
+    })
+  );
+
+  return scopedReports.filter((item) => item !== null).slice(0, normalizedTake);
+}
+
+export async function resolveCircleReport(
+  actor: CircleGovernanceActor,
+  circleId: string,
+  rawInput: Record<string, FormDataEntryValue | undefined>
+) {
+  const parsed = circleReportResolutionSchema.safeParse(rawInput);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "请检查举报处理信息后再提交。",
+      fieldErrors: validationErrors(parsed.error)
+    };
+  }
+
+  const normalizedNote = parsed.data.resolutionNote || null;
+
+  if (parsed.data.action !== "RESOLVE_ONLY" && !normalizedNote) {
+    return {
+      ok: false,
+      message: "执行圈内治理动作时请填写处理说明。",
+      fieldErrors: {
+        resolutionNote: "执行圈内治理动作时请填写处理说明"
+      }
+    };
+  }
+
+  const accessContext = await getCircleAccessContext({
+    circleId,
+    actorId: actor.id,
+    actorRole: actor.role
+  });
+
+  if (!accessContext?.canManage) {
+    return {
+      ok: false,
+      message: "你当前没有处理这个圈子举报的权限。"
+    } as const;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const report = await tx.report.findUnique({
+      where: {
+        id: parsed.data.reportId
+      },
+      select: {
+        id: true,
+        targetType: true,
+        targetId: true,
+        status: true
+      }
+    });
+
+    if (!report) {
+      return {
+        ok: false,
+        message: "未找到对应举报。"
+      } as const;
+    }
+
+    if (report.status !== ReportStatus.PENDING) {
+      return {
+        ok: false,
+        message: "该举报已经被处理，请刷新后查看最新状态。"
+      } as const;
+    }
+
+    const target = await resolveCircleGovernanceTarget(tx, {
+      targetType: report.targetType,
+      targetId: report.targetId
+    });
+
+    if (!target || target.circleId !== accessContext.circle.id) {
+      return {
+        ok: false,
+        message: "该举报不属于当前圈子，无法在这里处理。"
+      } as const;
+    }
+
+    if (parsed.data.action === "DELETE_POST" && report.targetType !== ReportTargetType.POST) {
+      return {
+        ok: false,
+        message: "当前举报目标不是帖子，不能执行删帖。"
+      } as const;
+    }
+
+    if (parsed.data.action === "DELETE_COMMENT" && report.targetType !== ReportTargetType.COMMENT) {
+      return {
+        ok: false,
+        message: "当前举报目标不是评论，不能执行删评。"
+      } as const;
+    }
+
+    let nextStatus: ReportStatus = ReportStatus.RESOLVED;
+
+    if (parsed.data.action === "REJECT_REPORT") {
+      nextStatus = ReportStatus.REJECTED;
+    } else if (parsed.data.action === "DELETE_POST") {
+      const post = await tx.post.findUnique({
+        where: {
+          id: report.targetId
+        },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          deletedAt: true,
+          authorId: true
+        }
+      });
+
+      if (!post || post.deletedAt) {
+        return {
+          ok: false,
+          message: "举报目标已经不存在，无法继续处理。"
+        } as const;
+      }
+
+      await tx.post.update({
+        where: {
+          id: post.id
+        },
+        data: {
+          status: ContentStatus.DELETED,
+          deletedAt: new Date()
+        }
+      });
+
+      if (post.status === ContentStatus.PUBLISHED) {
+        await tx.circle.update({
+          where: {
+            id: accessContext.circle.id
+          },
+          data: {
+            postsCount: {
+              decrement: 1
+            }
+          }
+        });
+      }
+
+      await tx.moderationAction.create({
+        data: {
+          actorId: actor.id,
+          targetUserId: post.authorId,
+          actionType: ModerationActionType.DELETE_POST,
+          targetType: ReportTargetType.POST,
+          targetId: post.id,
+          reason: normalizedNote,
+          metadataJson: {
+            scope: "circle",
+            circleId: accessContext.circle.id,
+            circleName: accessContext.circle.name,
+            circleSlug: accessContext.circle.slug,
+            source: "report"
+          }
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: "delete_post_by_circle_report",
+          entityType: "post",
+          entityId: post.id,
+          payloadJson: {
+            circleId: accessContext.circle.id,
+            circleName: accessContext.circle.name,
+            circleSlug: accessContext.circle.slug,
+            title: post.title,
+            reason: normalizedNote
+          }
+        }
+      });
+
+      if (post.authorId !== actor.id) {
+        await createNotification(tx, {
+          userId: post.authorId,
+          type: NotificationType.SYSTEM,
+          payload: {
+            title: "你的帖子因圈内举报被移除",
+            body: normalizedNote
+              ? `帖子《${post.title}》已被圈内管理员移除，原因：${normalizedNote}`
+              : `帖子《${post.title}》已被圈内管理员移除。`,
+            href: `/circles/${accessContext.circle.slug}`
+          }
+        });
+      }
+    } else if (parsed.data.action === "DELETE_COMMENT") {
+      const deletedComment = await deleteCircleCommentByManagerInTransaction(tx, {
+        actor,
+        commentId: report.targetId,
+        reason: normalizedNote,
+        circleId: accessContext.circle.id,
+        circleName: accessContext.circle.name,
+        circleSlug: accessContext.circle.slug
+      });
+
+      if (!deletedComment) {
+        return {
+          ok: false,
+          message: "举报目标已经不存在，无法继续处理。"
+        } as const;
+      }
+    } else if (parsed.data.action === "MUTE_3_DAYS" || parsed.data.action === "MUTE_7_DAYS") {
+      if (!target.ownerUserId) {
+        return {
+          ok: false,
+          message: "当前举报目标无法定位到对应用户，不能执行圈内禁言。"
+        } as const;
+      }
+
+      const targetUser = await tx.user.findUnique({
+        where: {
+          id: target.ownerUserId
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          profile: {
+            select: {
+              nickname: true
+            }
+          }
+        }
+      });
+
+      if (!targetUser) {
+        return {
+          ok: false,
+          message: "未找到被举报目标对应的用户。"
+        } as const;
+      }
+
+      const restrictionMessage = getCircleTargetRestrictionMessage({
+        accessContext,
+        actor,
+        targetUser
+      });
+
+      if (restrictionMessage) {
+        return {
+          ok: false,
+          message: restrictionMessage
+        } as const;
+      }
+
+      const days = parsed.data.action === "MUTE_3_DAYS" ? 3 : 7;
+
+      await applyCircleMuteInTransaction(tx, {
+        actor,
+        targetUser,
+        circle: {
+          id: accessContext.circle.id,
+          name: accessContext.circle.name,
+          slug: accessContext.circle.slug
+        },
+        days,
+        reason: normalizedNote
+      });
+    }
+
+    await tx.report.update({
+      where: {
+        id: report.id
+      },
+      data: {
+        status: nextStatus,
+        assigneeId: actor.id,
+        resolverId: actor.id,
+        resolutionNote: normalizedNote,
+        resolvedAt: new Date()
+      }
+    });
+
+    await tx.moderationAction.create({
+      data: {
+        actorId: actor.id,
+        targetUserId: target.ownerUserId ?? null,
+        reportId: report.id,
+        actionType: ModerationActionType.HANDLE_REPORT,
+        targetType: report.targetType,
+        targetId: report.targetId,
+        reason: normalizedNote,
+        metadataJson: {
+          scope: "circle",
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug,
+          targetLabel: target.label,
+          decision: parsed.data.action,
+          reportStatus: nextStatus
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "handle_circle_report",
+        entityType: "report",
+        entityId: report.id,
+        payloadJson: {
+          circleId: accessContext.circle.id,
+          circleName: accessContext.circle.name,
+          circleSlug: accessContext.circle.slug,
+          targetType: report.targetType,
+          targetId: report.targetId,
+          targetLabel: target.label,
+          action: parsed.data.action,
+          reportStatus: nextStatus,
+          resolutionNote: normalizedNote
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      message:
+        nextStatus === ReportStatus.REJECTED
+          ? "举报已驳回。"
+          : `圈内举报已处理，动作：${parsed.data.action}。`
+    } as const;
+  });
 }

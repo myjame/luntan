@@ -1,19 +1,30 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import type { ReportTargetType, ReportType } from "@/generated/prisma/client";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { requireActiveUser } from "@/modules/auth/lib/guards";
 import {
   addCircleManagerAction,
   deleteCirclePostAction,
-  removeCircleManagerAction
+  muteCircleUserAction,
+  removeCircleManagerAction,
+  resolveCircleReportAction,
+  toggleCirclePostPinAction,
+  unmuteCircleUserAction
 } from "@/modules/community/actions";
 import { CircleSettingsForm } from "@/modules/community/components/circle-settings-form";
 import {
   getManageableCircleBySlug,
-  listCircleCategories
+  listCircleCategories,
+  listCircleMutesForManagement,
+  listCircleReportsForManagement
 } from "@/modules/community/lib/service";
+import {
+  getReportTargetTypeLabel,
+  getReportTypeLabel
+} from "@/modules/moderation/lib/constants";
 import { listCirclePostsBySlug } from "@/modules/posts/lib/service";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +37,44 @@ type SearchParams = Promise<{
   result?: string;
   message?: string;
 }>;
+
+type CircleMuteItem = {
+  id: string;
+  reason: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+  user: {
+    id: string;
+    username: string;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+  createdBy: {
+    username: string;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+};
+
+type CircleReportItem = {
+  id: string;
+  targetType: ReportTargetType;
+  reportType: ReportType;
+  detail: string | null;
+  status: string;
+  createdAt: Date;
+  targetLabel: string;
+  targetHref: string;
+  circleSlug: string;
+  reporter: {
+    username: string;
+    profile: {
+      nickname: string | null;
+    } | null;
+  };
+};
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -75,6 +124,38 @@ function getFeedback(result?: string, message?: string) {
     };
   }
 
+  if (result === "post-pinned") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "帖子状态已更新",
+      message: message ?? "圈内置顶状态已经同步到内容流。"
+    };
+  }
+
+  if (result === "user-muted") {
+    return {
+      className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
+      title: "圈内禁言已生效",
+      message: message ?? "对应用户的圈内发言权限已经收回。"
+    };
+  }
+
+  if (result === "user-unmuted") {
+    return {
+      className: "border-slate-500/16 bg-slate-500/8 text-slate-800",
+      title: "圈内禁言已解除",
+      message: message ?? "对应用户已经恢复圈内发言权限。"
+    };
+  }
+
+  if (result === "report-resolved") {
+    return {
+      className: "border-emerald-500/16 bg-emerald-500/8 text-emerald-900",
+      title: "圈内举报已处理",
+      message: message ?? "举报处理结果已经写入治理日志。"
+    };
+  }
+
   if (result === "error") {
     return {
       className: "border-amber-500/16 bg-amber-500/10 text-amber-900",
@@ -96,6 +177,31 @@ function getActorLabel(actorLabel: string | null) {
   }
 
   return "你当前是圈管，可维护圈子资料。";
+}
+
+function getCircleReportActionOptions(targetType: string) {
+  const base = [
+    { value: "RESOLVE_ONLY", label: "仅结案" },
+    { value: "MUTE_3_DAYS", label: "禁言 3 天" },
+    { value: "MUTE_7_DAYS", label: "禁言 7 天" },
+    { value: "REJECT_REPORT", label: "驳回举报" }
+  ];
+
+  if (targetType === "POST") {
+    return [
+      { value: "DELETE_POST", label: "删帖并结案" },
+      ...base
+    ];
+  }
+
+  if (targetType === "COMMENT") {
+    return [
+      { value: "DELETE_COMMENT", label: "删评并结案" },
+      ...base
+    ];
+  }
+
+  return base;
 }
 
 export default async function CircleManagePage({
@@ -133,6 +239,19 @@ export default async function CircleManagePage({
 
   const feedback = getFeedback(query.result, query.message);
   const returnTo = `/circles/${accessContext.circle.slug}/manage`;
+  const [activeMutes, pendingReports] = (await Promise.all([
+    listCircleMutesForManagement({
+      circleId: accessContext.circle.id,
+      actorId: user.id,
+      actorRole: user.role
+    }),
+    listCircleReportsForManagement({
+      circleId: accessContext.circle.id,
+      actorId: user.id,
+      actorRole: user.role,
+      take: 8
+    })
+  ])) as [CircleMuteItem[], CircleReportItem[]];
   const ownerName =
     accessContext.circle.owner?.profile?.nickname ??
     accessContext.circle.owner?.username ??
@@ -162,7 +281,7 @@ export default async function CircleManagePage({
               资料、角色和圈内基础治理放在同一入口，运营动作更顺手。
             </h1>
             <p className="mt-4 text-sm leading-8 text-slate-600">
-              {getActorLabel(accessContext.actorLabel)} 这里已经接入圈内删帖动作，剩余的圈内禁言和举报处理会继续补齐。
+              {getActorLabel(accessContext.actorLabel)} 这里已经把资料维护、圈内置顶、删帖、禁言和举报处理收进同一个治理入口。
             </p>
           </div>
 
@@ -186,7 +305,7 @@ export default async function CircleManagePage({
         </div>
       ) : null}
 
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         <SurfaceCard className="h-full">
           <p className="text-sm text-slate-500">关注人数</p>
           <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
@@ -200,7 +319,15 @@ export default async function CircleManagePage({
           <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
             {accessContext.circle.postsCount}
           </p>
-          <p className="mt-2 text-sm text-slate-600">Step 6 会把这里对应的内容流能力补齐。</p>
+          <p className="mt-2 text-sm text-slate-600">圈内置顶会直接影响圈子内容流的排序展示。</p>
+        </SurfaceCard>
+
+        <SurfaceCard className="h-full">
+          <p className="text-sm text-slate-500">待处理举报</p>
+          <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
+            {pendingReports.length}
+          </p>
+          <p className="mt-2 text-sm text-slate-600">当前圈子里仍等待圈主或圈管结案的举报数量。</p>
         </SurfaceCard>
 
         <SurfaceCard className="h-full">
@@ -324,7 +451,7 @@ export default async function CircleManagePage({
           <SurfaceCard className="h-fit">
             <p className="eyebrow">圈内帖子治理</p>
             <p className="mt-4 text-sm leading-7 text-slate-600">
-              圈主、圈管和超管都可以在这里执行圈内删帖。删除采用软删除，并写入治理日志。
+              圈主、圈管和超管都可以在这里执行圈内置顶与删帖。删除采用软删除，置顶会直接同步到圈子内容流。
             </p>
 
             {managedPosts.length === 0 ? (
@@ -339,12 +466,31 @@ export default async function CircleManagePage({
                       <Link className="text-base font-semibold text-slate-950 transition hover:text-[var(--color-accent)]" href={`/posts/${post.id}`}>
                         {post.title}
                       </Link>
+                      <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                        {post.isPinned ? (
+                          <span className="rounded-full bg-[rgba(197,94,61,0.1)] px-3 py-1 text-[var(--color-accent)]">
+                            已圈内置顶
+                          </span>
+                        ) : null}
+                      </div>
                       <p className="text-sm text-slate-600">
                         作者：{post.author.profile?.nickname ?? post.author.username} · 评论 {post.commentCount}
                       </p>
                       <p className="text-xs text-slate-500">
                         发布时间：{formatDateTime(post.publishedAt ?? post.createdAt)}
                       </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <form action={toggleCirclePostPinAction}>
+                        <input name="circleId" type="hidden" value={accessContext.circle.id} />
+                        <input name="postId" type="hidden" value={post.id} />
+                        <input name="returnTo" type="hidden" value={returnTo} />
+                        <Button type="submit">{post.isPinned ? "取消置顶" : "设为置顶"}</Button>
+                      </form>
+                      <ButtonLink href={`/posts/${post.id}`} variant="ghost">
+                        查看前台
+                      </ButtonLink>
                     </div>
 
                     <form action={deleteCirclePostAction} className="mt-4 space-y-3">
@@ -367,13 +513,162 @@ export default async function CircleManagePage({
             )}
           </SurfaceCard>
 
+          <SurfaceCard className="h-fit">
+            <p className="eyebrow">圈内禁言</p>
+            <p className="mt-4 text-sm leading-7 text-slate-600">
+              圈内禁言会直接拦截发帖、评论和编辑动作。你可以手动按用户名禁言，也可以在处理举报时顺手执行。
+            </p>
+
+            <form action={muteCircleUserAction} className="mt-5 space-y-4">
+              <input name="circleId" type="hidden" value={accessContext.circle.id} />
+              <input name="returnTo" type="hidden" value={returnTo} />
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">禁言用户名</span>
+                <input
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                  name="username"
+                  placeholder="输入要禁言的用户名"
+                  type="text"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">禁言时长</span>
+                <select
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                  defaultValue="3"
+                  name="durationDays"
+                >
+                  <option value="1">禁言 1 天</option>
+                  <option value="3">禁言 3 天</option>
+                  <option value="7">禁言 7 天</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">禁言说明</span>
+                <textarea
+                  className="mt-2 min-h-24 w-full rounded-[1.2rem] border border-black/10 bg-white/90 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                  name="reason"
+                  placeholder="建议填写禁言原因，便于被处理用户和其他管理者回溯。"
+                />
+              </label>
+              <Button type="submit">执行圈内禁言</Button>
+            </form>
+
+            <div className="mt-6 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-900">当前生效中的圈内禁言</p>
+                <span className="text-xs font-semibold text-slate-500">共 {activeMutes.length} 条</span>
+              </div>
+
+              {activeMutes.length === 0 ? (
+                <div className="rounded-[1.15rem] border border-dashed border-black/10 bg-white/72 px-4 py-5 text-sm leading-7 text-slate-600">
+                  当前没有仍在生效中的圈内禁言记录。
+                </div>
+              ) : (
+                activeMutes.map((mute: (typeof activeMutes)[number]) => (
+                  <div className="rounded-[1.15rem] border border-black/8 bg-white/78 px-4 py-4" key={mute.id}>
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <p className="text-base font-semibold text-slate-950">
+                          {mute.user.profile?.nickname ?? mute.user.username}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500">
+                          @{mute.user.username} · 到期时间：{formatDateTime(mute.expiresAt)}
+                        </p>
+                        <p className="mt-2 text-sm leading-7 text-slate-600">
+                          {mute.reason || "未填写额外说明。"}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          执行人：{mute.createdBy.profile?.nickname ?? mute.createdBy.username}
+                        </p>
+                      </div>
+
+                      <form action={unmuteCircleUserAction}>
+                        <input name="circleId" type="hidden" value={accessContext.circle.id} />
+                        <input name="muteId" type="hidden" value={mute.id} />
+                        <input name="returnTo" type="hidden" value={returnTo} />
+                        <Button type="submit" variant="secondary">
+                          解除禁言
+                        </Button>
+                      </form>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </SurfaceCard>
+
           <SurfaceCard className="h-fit bg-[linear-gradient(155deg,rgba(255,255,255,0.94),rgba(23,107,108,0.08))]">
-            <p className="eyebrow">后续治理</p>
-            <ul className="mt-5 space-y-3 text-sm leading-7 text-slate-600">
-              <li>帖子置顶、圈内禁言和更完整的公告流还会继续补齐。</li>
-              <li>圈内举报处理与平台级联动会在后续治理步骤继续完善。</li>
-              <li>这一页目前先承担圈子资料维护和角色入口，不会假装已经具备完整治理闭环。</li>
-            </ul>
+            <p className="eyebrow">圈内举报</p>
+            <p className="mt-4 text-sm leading-7 text-slate-600">
+              这里收口当前圈子下的待处理举报。你可以直接结案、删帖删评，或者对违规用户执行圈内禁言。
+            </p>
+
+            {pendingReports.length === 0 ? (
+              <div className="mt-5 rounded-[1.15rem] border border-dashed border-black/10 bg-white/72 px-4 py-5 text-sm leading-7 text-slate-600">
+                当前圈子没有待处理举报，治理队列是空的。
+              </div>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {pendingReports.map((report: (typeof pendingReports)[number]) => (
+                  <div className="rounded-[1.15rem] border border-black/8 bg-white/82 px-4 py-4" key={report.id}>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-[var(--color-accent)]">
+                        {getReportTypeLabel(report.reportType)} · {getReportTargetTypeLabel(report.targetType)}
+                      </p>
+                      <p className="text-base font-semibold text-slate-950">{report.targetLabel}</p>
+                      <p className="text-sm text-slate-500">
+                        举报人：@{report.reporter.username} · {report.reporter.profile?.nickname ?? "未设置昵称"}
+                      </p>
+                      <p className="text-sm leading-7 text-slate-600">
+                        {report.detail || "举报人未补充详细说明。"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        提交时间：{formatDateTime(report.createdAt)}
+                      </p>
+                    </div>
+
+                    <form action={resolveCircleReportAction} className="mt-4 space-y-3">
+                      <input name="circleId" type="hidden" value={accessContext.circle.id} />
+                      <input name="reportId" type="hidden" value={report.id} />
+                      <input name="returnTo" type="hidden" value={returnTo} />
+                      <label className="block">
+                        <span className="text-sm font-semibold text-slate-700">处理动作</span>
+                        <select
+                          className="mt-2 w-full rounded-2xl border border-black/10 bg-white/90 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                          defaultValue={getCircleReportActionOptions(report.targetType)[0]?.value}
+                          name="action"
+                        >
+                          {getCircleReportActionOptions(report.targetType).map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-semibold text-slate-700">处理说明</span>
+                        <textarea
+                          className="mt-2 min-h-24 w-full rounded-[1.2rem] border border-black/10 bg-white/90 px-4 py-3 text-sm leading-7 text-slate-900 outline-none transition focus:border-[var(--color-accent)]"
+                          name="resolutionNote"
+                          placeholder="除“仅结案”外，其他动作建议填写处理说明。"
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-3">
+                        <Button type="submit">处理举报</Button>
+                        {report.targetHref ? (
+                          <ButtonLink href={report.targetHref} variant="ghost">
+                            查看目标
+                          </ButtonLink>
+                        ) : null}
+                      </div>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            )}
           </SurfaceCard>
         </div>
       </div>

@@ -21,6 +21,7 @@ import {
   awardCommentCreatePoints,
   awardPostCreatePoints
 } from "@/modules/growth/lib/service";
+import { getActiveCircleMute } from "@/modules/community/lib/service";
 import { prisma } from "@/server/db/prisma";
 import { appConfig } from "@/server/config/app-config";
 import { readThroughRuntimeCache } from "@/server/runtime-cache";
@@ -56,6 +57,30 @@ function validationErrors(error: unknown) {
   return Object.fromEntries(
     issues.map((issue) => [String(issue.path[0] ?? "form"), issue.message])
   ) as Record<string, string>;
+}
+
+const circleMuteDateFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+async function getCircleMuteMessage(circleId: string, userId: string) {
+  const muteRecord = await getActiveCircleMute({
+    circleId,
+    userId
+  });
+
+  if (!muteRecord) {
+    return null;
+  }
+
+  const until = circleMuteDateFormatter.format(muteRecord.expiresAt);
+
+  return muteRecord.reason
+    ? `你在圈子「${muteRecord.circle.name}」内已被禁言至 ${until}，原因：${muteRecord.reason}`
+    : `你在圈子「${muteRecord.circle.name}」内已被禁言至 ${until}`;
 }
 
 const postFeedSelect = {
@@ -1503,6 +1528,18 @@ export async function createComment(
     };
   }
 
+  const circleMuteMessage = await getCircleMuteMessage(post.circle.id, actor.id);
+
+  if (circleMuteMessage) {
+    return {
+      ok: false,
+      message: circleMuteMessage,
+      fieldErrors: {
+        content: circleMuteMessage
+      }
+    };
+  }
+
   if (parsed.data.isAnonymous && !post.circle.allowAnonymous) {
     return {
       ok: false,
@@ -1779,17 +1816,18 @@ export async function updateComment(
       contentJson: true,
       contentHtml: true,
       deletedAt: true,
-      post: {
-        select: {
-          id: true,
-          title: true,
-          circle: {
-            select: {
-              allowAnonymous: true,
-              slug: true
+        post: {
+          select: {
+            id: true,
+            title: true,
+            circle: {
+              select: {
+                id: true,
+                allowAnonymous: true,
+                slug: true
+              }
             }
           }
-        }
       }
     }
   });
@@ -1798,6 +1836,18 @@ export async function updateComment(
     return {
       ok: false,
       message: "你当前不能编辑这条评论。"
+    };
+  }
+
+  const commentCircleMuteMessage = await getCircleMuteMessage(existingComment.post.circle.id, actor.id);
+
+  if (commentCircleMuteMessage) {
+    return {
+      ok: false,
+      message: commentCircleMuteMessage,
+      fieldErrors: {
+        content: commentCircleMuteMessage
+      }
     };
   }
 
@@ -2192,6 +2242,18 @@ export async function createPost(
     };
   }
 
+  const circleMuteMessage = await getCircleMuteMessage(postingContext.circle.id, actor.id);
+
+  if (circleMuteMessage) {
+    return {
+      ok: false,
+      message: circleMuteMessage,
+      fieldErrors: {
+        content: circleMuteMessage
+      }
+    };
+  }
+
   if (parsed.data.postType === "ANNOUNCEMENT" && !postingContext.canCreateAnnouncement) {
     return {
       ok: false,
@@ -2490,6 +2552,18 @@ export async function updatePost(
     return {
       ok: false,
       message: "帖子所属圈子状态异常，暂时无法编辑。"
+    };
+  }
+
+  const postCircleMuteMessage = await getCircleMuteMessage(existingPost.circle.id, actor.id);
+
+  if (postCircleMuteMessage) {
+    return {
+      ok: false,
+      message: postCircleMuteMessage,
+      fieldErrors: {
+        content: postCircleMuteMessage
+      }
     };
   }
 

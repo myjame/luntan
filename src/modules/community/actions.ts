@@ -10,10 +10,14 @@ import {
   addCircleManager,
   deleteCirclePostByManager,
   followCircle,
+  muteCircleUser,
   removeCircleManager,
+  resolveCircleReport,
   reviewCircleApplication,
   submitCircleApplication,
+  toggleCirclePostPin,
   unfollowCircle,
+  unmuteCircleUser,
   updateCircleProfile
 } from "@/modules/community/lib/service";
 
@@ -270,6 +274,118 @@ export async function deleteCirclePostAction(formData: FormData) {
   redirect(
     buildRedirectPath(returnTo, {
       result: result.ok ? "post-deleted" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function toggleCirclePostPinAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const circleId = formData.get("circleId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/circles");
+
+  if (typeof circleId !== "string" || !circleId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少圈子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await toggleCirclePostPin(user, circleId, formToRecord(formData));
+
+  revalidatePath("/");
+  revalidatePath("/square");
+  revalidatePath("/circles");
+  revalidatePath(returnTo);
+  revalidatePath("/admin/posts");
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "post-pinned" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function muteCircleUserAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const circleId = formData.get("circleId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/circles");
+
+  if (typeof circleId !== "string" || !circleId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少圈子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await muteCircleUser(user, circleId, formToRecord(formData));
+
+  revalidatePath(returnTo);
+  revalidatePath("/admin/moderation/users");
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "user-muted" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function unmuteCircleUserAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const circleId = formData.get("circleId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/circles");
+
+  if (typeof circleId !== "string" || !circleId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少圈子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await unmuteCircleUser(user, circleId, formToRecord(formData));
+
+  revalidatePath(returnTo);
+  revalidatePath("/admin/moderation/users");
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "user-unmuted" : "error",
+      message: result.message
+    }) as Route
+  );
+}
+
+export async function resolveCircleReportAction(formData: FormData) {
+  const user = await requireActiveUser();
+  const circleId = formData.get("circleId");
+  const returnTo = resolveReturnTo(formData.get("returnTo"), "/circles");
+
+  if (typeof circleId !== "string" || !circleId.trim()) {
+    redirect(
+      buildRedirectPath(returnTo, {
+        result: "error",
+        message: "缺少圈子标识。"
+      }) as Route
+    );
+  }
+
+  const result = await resolveCircleReport(user, circleId, formToRecord(formData));
+
+  revalidatePath(returnTo);
+  revalidatePath("/admin/moderation/reports");
+  revalidatePath("/admin/logs");
+
+  redirect(
+    buildRedirectPath(returnTo, {
+      result: result.ok ? "report-resolved" : "error",
       message: result.message
     }) as Route
   );

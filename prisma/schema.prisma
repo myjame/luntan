@@ -251,6 +251,9 @@ model User {
   circleApplications   CircleApplication[]       @relation("CircleApplicationApplicant")
   reviewedApplications CircleApplication[]       @relation("CircleApplicationReviewer")
   circleFollows        CircleFollow[]
+  circleMutes          CircleMute[]              @relation("CircleMuteUser")
+  createdCircleMutes   CircleMute[]              @relation("CircleMuteCreatedBy")
+  revokedCircleMutes   CircleMute[]              @relation("CircleMuteRevokedBy")
   posts                Post[]                    @relation("PostAuthor")
   reviewedPosts        Post[]                    @relation("PostReviewer")
   postRevisions        PostRevision[]
@@ -399,6 +402,7 @@ model Circle {
   managers       CircleManagerRelation[]
   applications   CircleApplication[]
   follows        CircleFollow[]
+  mutes          CircleMute[]
   tags           Tag[]
   posts          Post[]
 
@@ -464,6 +468,28 @@ model CircleFollow {
   @@unique([circleId, userId])
   @@index([userId])
   @@map("circle_follows")
+}
+
+model CircleMute {
+  id          String   @id @default(cuid())
+  circleId    String   @map("circle_id")
+  userId      String   @map("user_id")
+  createdById String   @map("created_by_id")
+  revokedById String?  @map("revoked_by_id")
+  reason      String?
+  expiresAt   DateTime @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  circle      Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  user        User     @relation("CircleMuteUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation("CircleMuteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  revokedBy   User?    @relation("CircleMuteRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@unique([circleId, userId])
+  @@index([userId])
+  @@index([circleId, revokedAt, expiresAt])
+  @@map("circle_mutes")
 }
 
 model Tag {
