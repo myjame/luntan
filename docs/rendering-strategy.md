@@ -13,17 +13,21 @@
 
 ### 2.1 公开页（SSR + SEO）
 
-以下页面使用服务端渲染，并在页面内补齐基础 SEO 元数据：
+以下公开入口使用服务端渲染，并在页面内补齐基础 SEO 元数据：
 
 - `/` 首页
+- `/circles` 圈子列表
 - `/circles/[slug]` 圈子详情
+- `/discover` 发现页
 - `/posts/[postId]` 帖子详情
+- `/square` 广场页
 
 补充说明：
 
 - `robots.txt`：`src/app/robots.ts`
 - `sitemap.xml`：`src/app/sitemap.ts`
 - SEO 构建工具：`src/lib/metadata.ts`
+- `/search` 为公开访问页，但默认 `noindex`，避免搜索结果页被收录
 
 ### 2.2 动态页面（force-dynamic）
 

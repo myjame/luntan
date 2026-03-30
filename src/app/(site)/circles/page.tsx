@@ -1,8 +1,10 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { followCircleAction, unfollowCircleAction } from "@/modules/community/actions";
 import {
@@ -12,6 +14,14 @@ import {
 } from "@/modules/community/lib/service";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = buildSeoMetadata({
+  title: "圈子广场",
+  description:
+    "浏览公开圈子、按分类筛选兴趣方向，并查看圈子申请、关注与圈内沉淀的首版规则。",
+  path: "/circles",
+  keywords: ["圈子", "兴趣社区", "公开圈子", "社区分类", "圈子关注"]
+});
 
 type SearchParams = Promise<{
   q?: string;

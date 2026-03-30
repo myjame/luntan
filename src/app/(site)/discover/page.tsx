@@ -1,14 +1,24 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { ButtonLink } from "@/components/ui/button";
 import { ListCard, SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { UserFollowCard } from "@/modules/social/components/user-follow-card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { getDiscoverPageData } from "@/modules/discovery/lib/service";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = buildSeoMetadata({
+  title: "发现页",
+  description:
+    "在发现页查看推荐圈子、热门话题、热门内容与活跃作者，把内容发现效率做成社区入口。",
+  path: "/discover",
+  keywords: ["发现页", "推荐圈子", "热门话题", "热门内容", "活跃作者"]
+});
 
 export default async function DiscoverPage() {
   const [currentUser, data] = await Promise.all([getCurrentUser(), getDiscoverPageData()]);

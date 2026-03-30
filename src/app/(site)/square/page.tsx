@@ -1,13 +1,23 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { squareSortOptions } from "@/modules/posts/lib/constants";
 import { listHotGlobalTags, listSquarePosts } from "@/modules/posts/lib/service";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = buildSeoMetadata({
+  title: "广场内容流",
+  description:
+    "查看社区公开内容的热门与最新流，快速把握当前讨论热度、热门话题与公开帖子分发节奏。",
+  path: "/square",
+  keywords: ["社区广场", "热门帖子", "最新帖子", "内容流", "公开讨论"]
+});
 
 type SearchParams = Promise<{
   sort?: string;

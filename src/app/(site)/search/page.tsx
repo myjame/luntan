@@ -1,14 +1,29 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { ButtonLink } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { buildSeoMetadata } from "@/lib/metadata";
 import { PostFeedCard } from "@/modules/posts/components/post-feed-card";
 import { UserFollowCard } from "@/modules/social/components/user-follow-card";
 import { getCurrentUser } from "@/modules/auth/lib/guards";
 import { getDiscoverPageData, searchCommunity } from "@/modules/discovery/lib/service";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  ...buildSeoMetadata({
+    title: "社区搜索",
+    description: "搜索帖子、圈子和用户，快速找到想看的内容与想加入的社区关系。",
+    path: "/search",
+    keywords: ["社区搜索", "帖子搜索", "圈子搜索", "用户搜索"]
+  }),
+  robots: {
+    index: false,
+    follow: false
+  }
+};
 
 type SearchParams = Promise<{
   q?: string;
